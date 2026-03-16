@@ -1,4 +1,3 @@
-#Put&Call옵션에 RAW데이터를 주식연계시트에 있는 컬럼에 넣는 코드
 import re
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -43,6 +42,17 @@ def _lines_from_tables(tables: List[pd.DataFrame]) -> List[str]:
 
 def _corpus_from_lines(lines: List[str]) -> str:
     return "\n".join([x for x in lines if x]).strip()
+
+
+def _multiline_corpus_from_lines(lines: List[str]) -> str:
+    out = []
+    for line in lines:
+        s = str(line or "").replace("\xa0", " ")
+        s = re.sub(r"[ \t]+", " ", s)
+        s = s.strip()
+        if s:
+            out.append(s)
+    return "\n".join(out).strip()
 
 
 def _safe_percent(value: Any) -> str:
@@ -284,11 +294,11 @@ CALL_END_PATTERNS = [
 ]
 
 REFERENCE_TAIL_PATTERNS = [
-    r'\s*(?:이\s*외|이외)\s*.*?기타 투자판단에 참고할 사항.*$',
-    r'\s*세부내용은\s*.*?기타 투자판단에 참고할 사항.*$',
-    r'\s*상세내용은\s*.*?기타 투자판단에 참고할 사항.*$',
+    r"\s*(?:이\s*외|이외)\s*.*?기타 투자판단에 참고할 사항.*$",
+    r"\s*세부내용은\s*.*?기타 투자판단에 참고할 사항.*$",
+    r"\s*상세내용은\s*.*?기타 투자판단에 참고할 사항.*$",
     r'\s*".*?기타 투자판단에 참고할 사항".*$',
-    r'\s*을\s*참고(?:하여)?\s*주시기\s*바랍니다\.?$',
+    r"\s*을\s*참고(?:하여)?\s*주시기\s*바랍니다\.?$",
 ]
 
 
@@ -397,7 +407,6 @@ def _to_pct_text(cell: Any, min_v: float = None, max_v: float = None) -> str:
         return ""
     if max_v is not None and val > max_v:
         return ""
-
     if float(val).is_integer():
         return f"{int(val)}%"
     return f"{val}%"
@@ -553,11 +562,154 @@ def extract_call_ratio_and_ytc_from_text(text: str) -> Tuple[str, str]:
 
 
 # ==========================================================
+# [RAW 전체 direct 추출용 패턴]
+# - 기존 9.1 로직 결과가 "23. 기타 투자판단..." 참조 문장일 때만 사용
+# ==========================================================
+DIRECT_PUT_START_PATTERNS = [
+    r"(?:^|\n)\s*\d+\)\s*조기상환청구권\s*\(\s*Put\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*\d+\)\s*사채권자의\s*조기상환청구권\s*\(\s*Put\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*\[\s*Put\s*Option에\s*관한\s*사항\s*\]",
+    r"(?:^|\n)\s*\[\s*조기상환청구권\s*\(\s*Put\s*Option\s*\)\s*에\s*관한\s*사항\s*\]",
+    r"(?:^|\n)\s*조기상환청구권\s*\(\s*Put\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*사채권자의\s*조기상환청구권\s*\(\s*Put\s*Option\s*\)\s*에\s*관한\s*사항",
+]
+
+DIRECT_CALL_START_PATTERNS = [
+    r"(?:^|\n)\s*\d+\)\s*매도청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*\d+\)\s*중도상환청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*\[\s*Call\s*Option에\s*관한\s*사항\s*\]",
+    r"(?:^|\n)\s*\[\s*매도청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항\s*\]",
+    r"(?:^|\n)\s*\[\s*중도상환청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항\s*\]",
+    r"(?:^|\n)\s*매도청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*중도상환청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항",
+    r"(?:^|\n)\s*발행회사의\s*중도상환청구권\s*\(\s*Call\s*Option\s*\)\s*에\s*관한\s*사항",
+]
+
+DIRECT_COMMON_END_PATTERNS = [
+    r"(?:^|\n)\s*9\s*[\.\-]?\s*1\s*[\)\.]?\s*옵션에\s*관한\s*사항",
+    r"(?:^|\n)\s*9\s*[\.\-]?\s*1\s*[\)\.]?\s*옵션사항",
+    r"(?:^|\n)\s*9\s*[\.\-]?\s*2\s*[\)\.]?",
+    r"(?:^|\n)\s*9\s*[\.\-]?\s*3\s*[\)\.]?",
+    r"(?:^|\n)\s*10\s*[\)\.]?",
+    r"(?:^|\n)\s*11\s*[\)\.]?",
+    r"(?:^|\n)\s*12\s*[\)\.]?",
+    r"(?:^|\n)\s*13\s*[\)\.]?",
+    r"(?:^|\n)\s*20\s*[\)\.]?",
+    r"(?:^|\n)\s*21\s*[\)\.]?",
+    r"(?:^|\n)\s*22\s*[\)\.]?",
+    r"(?:^|\n)\s*23\s*[\)\.]?\s*기타\s*투자판단",
+    r"(?:^|\n)\s*24\s*[\)\.]?",
+    r"(?:^|\n)\s*25\s*[\)\.]?",
+    r"(?:^|\n)\s*\[\s*조달자금의\s*구체적\s*사용\s*목적\s*\]",
+]
+
+
+def _find_earliest_multiline_match(
+    text: str,
+    patterns: List[str],
+    start_pos: int = 0,
+) -> Optional[Tuple[int, int, str]]:
+    best = None
+    sub = text[start_pos:]
+
+    for pat in patterns:
+        m = re.search(pat, sub, flags=re.IGNORECASE | re.MULTILINE)
+        if not m:
+            continue
+
+        abs_start = start_pos + m.start()
+        abs_end = start_pos + m.end()
+
+        if best is None or abs_start < best[0]:
+            best = (abs_start, abs_end, pat)
+
+    return best
+
+
+def _normalize_extracted_option_block(text: str) -> str:
+    s = str(text or "").replace("\xa0", " ")
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n{2,}", "\n", s)
+    s = s.strip()
+    s = _trim_reference_tail(s)
+    s = s.replace("\n", " ")
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+
+def _extract_direct_option_block(
+    corpus: str,
+    start_patterns: List[str],
+    end_patterns: List[str],
+) -> str:
+    if not corpus:
+        return ""
+
+    raw = _multiline_corpus_from_lines(corpus.splitlines())
+    if not raw:
+        return ""
+
+    start_match = _find_earliest_multiline_match(raw, start_patterns)
+    if not start_match:
+        return ""
+
+    start_idx, start_end, _ = start_match
+
+    end_match = _find_earliest_multiline_match(
+        raw,
+        end_patterns,
+        start_pos=start_end,
+    )
+
+    end_idx = end_match[0] if end_match else len(raw)
+
+    if end_idx <= start_idx:
+        return ""
+
+    block = raw[start_idx:end_idx].strip()
+    return _normalize_extracted_option_block(block)
+
+
+def extract_put_option_text_direct(corpus: str) -> str:
+    end_patterns = DIRECT_CALL_START_PATTERNS + DIRECT_COMMON_END_PATTERNS
+    return _extract_direct_option_block(
+        corpus,
+        DIRECT_PUT_START_PATTERNS,
+        end_patterns,
+    )
+
+
+def extract_call_option_text_direct(corpus: str) -> str:
+    return _extract_direct_option_block(
+        corpus,
+        DIRECT_CALL_START_PATTERNS,
+        DIRECT_COMMON_END_PATTERNS,
+    )
+
+
+# ==========================================================
+# [기존 결과가 23 참조 문장인지 판별]
+# - 이 경우에만 RAW 전체 direct 추출 발동
+# ==========================================================
+def _is_23_reference_only_text(text: str) -> bool:
+    s = _clean_line(text)
+    if not s:
+        return False
+
+    patterns = [
+        r"^\s*23\s*[\.\)]\s*기타\s*투자판단에\s*(?:참고|참조)할\s*사항\s*(?:참고|참조)?\s*$",
+        r"^\s*23\s*[\.\)]\s*기타\s*투자판단에\s*(?:참고|참조)할\s*사항(?:을)?\s*(?:참고|참조)하시기\s*바랍니다\.?\s*$",
+        r"^\s*23\s*[\.\)]\s*기타\s*투자판단에\s*(?:참고|참조)할\s*사항\s*참조\s*$",
+        r"^\s*23\s*[\.\)]\s*기타\s*투자판단에\s*(?:참고|참조)할\s*사항\s*참고\s*$",
+    ]
+    return any(re.search(p, s, flags=re.IGNORECASE) for p in patterns)
+
+
+# ==========================================================
 # [최종 파서]
-# - Put Option = 9.1 전체 - Call block 제거
-# - Call Option = Put 원문 안에서 잘라낸 Call block (헤딩 포함)
-# - 단, 9.1이 참조 문장만 있거나 22.기타 투자판단...이 들어오면
-#   Put/Call 둘 다 "공시 확인 바람"
+# - 1차: 기존 9.1 로직
+# - 2차: Put 결과가 "23. 기타 투자판단..." 참조 문장이면
+#        RAW 전체에서 Put/Call 블록 direct 추출
 # ==========================================================
 def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
     title = clean_title(rec.get("title", "") or "")
@@ -573,15 +725,17 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
 
     lines = _lines_from_tables(tables)
     corpus = _corpus_from_lines(lines)
+    multiline_corpus = _multiline_corpus_from_lines(lines)
 
-    # 1) 9.1 전체 섹션 추출
+    # ==========================================================
+    # [1차] 기존 9.1 로직
+    # ==========================================================
     section_91 = extract_91_option_section_from_lines(lines)
     if not section_91:
         section_91 = extract_91_option_section_from_corpus(corpus)
 
     section_91 = _clean_line(section_91)
 
-    # 2) 예외 처리
     force_disclosure_check = False
     if section_91:
         if _is_reference_only_91_section(section_91):
@@ -589,26 +743,41 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         elif _contains_invalid_22_reference_in_91(section_91):
             force_disclosure_check = True
 
-    # 3) Put / Call 추출
     if force_disclosure_check:
         row["Put Option"] = "공시 확인 바람"
         row["Call Option"] = "공시 확인 바람"
-        call_text = ""
+        call_text_for_ratio = ""
     else:
-        # section_91에서 Call block 추출 (헤딩 포함)
-        call_text = extract_call_option_text_from_section(section_91)
+        call_text_old = extract_call_option_text_from_section(section_91)
 
-        # 9.1 안에서 못 찾으면 전체 corpus에서 fallback
-        if not call_text:
-            call_text = extract_call_option_text_from_section(corpus)
+        if not call_text_old:
+            call_text_old = extract_call_option_text_from_section(corpus)
 
-        # Put Option에서는 Call block 제거
-        put_text = remove_call_option_text_from_section(section_91) if call_text else section_91
+        put_text_old = remove_call_option_text_from_section(section_91) if call_text_old else section_91
 
-        row["Put Option"] = put_text if put_text else "공시 확인 바람"
-        row["Call Option"] = call_text if call_text else "공시 확인 바람"
+        row["Put Option"] = put_text_old if put_text_old else "공시 확인 바람"
+        row["Call Option"] = call_text_old if call_text_old else "공시 확인 바람"
+        call_text_for_ratio = row["Call Option"] if row["Call Option"] != "공시 확인 바람" else ""
 
-    # 4) Call 비율 / YTC : 표 key-value 우선
+    # ==========================================================
+    # [2차] Put이 23 참조 문장이면 RAW 전체 direct 추출
+    # ==========================================================
+    need_direct_retry = _is_23_reference_only_text(row["Put Option"])
+
+    if need_direct_retry:
+        direct_put_text = extract_put_option_text_direct(multiline_corpus)
+        direct_call_text = extract_call_option_text_direct(multiline_corpus)
+
+        if direct_put_text:
+            row["Put Option"] = direct_put_text
+
+        if direct_call_text:
+            row["Call Option"] = direct_call_text
+            call_text_for_ratio = direct_call_text
+
+    # ==========================================================
+    # [Call 비율 / YTC] : 표 key-value 우선
+    # ==========================================================
     row["Call 비율"] = _safe_percent(
         scan_label_value_preferring_correction(
             tables,
@@ -625,7 +794,9 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         )
     )
 
-    # 5) 표 grid fallback
+    # ==========================================================
+    # [표 grid fallback]
+    # ==========================================================
     if not row["Call 비율"] or not row["YTC"]:
         table_ratio, table_ytc, _ = extract_call_ratio_ytc_from_table_grid(tables)
 
@@ -634,9 +805,11 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         if not row["YTC"]:
             row["YTC"] = table_ytc
 
-    # 6) Call 본문 fallback
-    if (not row["Call 비율"] or not row["YTC"]) and call_text and call_text != "공시 확인 바람":
-        ext_ratio, ext_ytc = extract_call_ratio_and_ytc_from_text(call_text)
+    # ==========================================================
+    # [Call 본문 fallback]
+    # ==========================================================
+    if (not row["Call 비율"] or not row["YTC"]) and call_text_for_ratio:
+        ext_ratio, ext_ytc = extract_call_ratio_and_ytc_from_text(call_text_for_ratio)
 
         if not row["Call 비율"]:
             row["Call 비율"] = ext_ratio

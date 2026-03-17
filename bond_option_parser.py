@@ -569,9 +569,14 @@ def extract_call_ratio_and_ytc_from_text(text: str) -> Tuple[str, str]:
 # 7. 정정 보고서면 위쪽 9.1은 넘기고 마지막 9.1부터 시작
 # ==========================================================
 def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
-    title = clean_title(rec.get("title", "") or "")
+    raw_title = rec.get("title", "") or ""
+    title = clean_title(raw_title)
     tables = rec.get("tables", [])
-    corr_after = extract_correction_after_map(tables) if is_correction_title(title) else {}
+
+    # 정정 여부는 반드시 원본 title 기준으로 판단
+    is_corr = is_correction_title(raw_title) or is_correction_title(title)
+
+    corr_after = extract_correction_after_map(tables) if is_corr else {}
 
     row = {
         "Put Option": "",
@@ -583,52 +588,46 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
     lines = _lines_from_tables(tables)
     corpus = _corpus_from_lines(lines)
 
-    use_last_91 = is_correction_title(title)
+    # 정정 보고서면 마지막 9.1, 일반 보고서면 첫 9.1
+    use_last_91 = is_corr
 
-    # 1) 9.1 전체 섹션 추출
-    # - 일반 보고서: 첫 번째 9.1
-    # - 정정 보고서: 마지막 9.1
     section_91 = extract_91_option_section_from_lines(lines, use_last_91=use_last_91)
     if not section_91:
         section_91 = extract_91_option_section_from_corpus(corpus, use_last_91=use_last_91)
 
     section_91 = _clean_line(section_91)
 
-    # 2) 9.1 자체를 못 찾으면 공시 확인 바람
     if not section_91:
         row["Put Option"] = "공시 확인 바람"
         row["Call Option"] = "공시 확인 바람"
         call_text = ""
 
-    # 3) 9.1이 "-" 이면 Put/Call 둘 다 "-"
     elif _is_dash_91_section(section_91):
         row["Put Option"] = "-"
         row["Call Option"] = "-"
         call_text = ""
 
-    # 4) 9.1이 22./23. 참조형이면 Put/Call 둘 다 공시 확인 바람
     elif _contains_22_or_23_reference(section_91):
         row["Put Option"] = "공시 확인 바람"
         row["Call Option"] = "공시 확인 바람"
         call_text = ""
 
     else:
-        # 5) 먼저 9.1 전체를 Put 원본으로 잡는다
+        # 1. 먼저 9.1 전체를 Put에 넣고
         put_text = section_91
 
-        # 6) 그 Put 안에서만 Call을 찾는다
+        # 2. 그 Put 안에서 Call을 떼서
         call_text = extract_call_option_text_from_section(put_text)
 
-        # 7) Call은 Call 컬럼으로 보낸다
+        # 3. Call은 Call 컬럼으로 보내고
         row["Call Option"] = call_text if call_text else "공시 확인 바람"
 
-        # 8) Put에서는 Call만 제거한다
+        # 4. Put에서는 Call만 제거한다
         if call_text:
             put_text = remove_call_option_text_from_section(put_text)
 
         row["Put Option"] = put_text if put_text else "공시 확인 바람"
 
-    # 9) Call 비율 / YTC : 표 key-value 우선
     row["Call 비율"] = _safe_percent(
         scan_label_value_preferring_correction(
             tables,
@@ -645,7 +644,6 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         )
     )
 
-    # 10) 표 grid fallback
     if not row["Call 비율"] or not row["YTC"]:
         table_ratio, table_ytc, _ = extract_call_ratio_ytc_from_table_grid(tables)
 
@@ -654,7 +652,6 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         if not row["YTC"]:
             row["YTC"] = table_ytc
 
-    # 11) Call 본문 fallback
     if (not row["Call 비율"] or not row["YTC"]) and call_text and call_text != "공시 확인 바람":
         ext_ratio, ext_ytc = extract_call_ratio_and_ytc_from_text(call_text)
 

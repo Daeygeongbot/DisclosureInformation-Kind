@@ -211,9 +211,46 @@ def extract_91_option_section_from_corpus(corpus: str) -> str:
 
 
 # ==========================================================
+# [정정 보고서용 타겟 표 선택]
+# - 일반 보고서: 전체 표 사용
+# - 정정 보고서: 아래쪽 실제 본문 표에서 9.1 찾기
+#   -> 마지막으로 9.1 헤딩이 등장하는 표부터 아래 표만 사용
+# ==========================================================
+def _table_contains_91_heading(df: pd.DataFrame) -> bool:
+    try:
+        lines = _lines_from_tables([df])
+    except Exception:
+        return False
+
+    for line in lines:
+        if _is_91_heading(line):
+            return True
+    return False
+
+
+def _select_target_tables_for_option_text(title: str, tables: List[pd.DataFrame]) -> List[pd.DataFrame]:
+    if not tables:
+        return []
+
+    if not is_correction_title(title):
+        return tables
+
+    last_idx = None
+    for idx, df in enumerate(tables):
+        if _table_contains_91_heading(df):
+            last_idx = idx
+
+    if last_idx is not None:
+        return tables[last_idx:]
+
+    return tables
+
+
+# ==========================================================
 # [9.1 단순 예외]
-# 5) 9.1이 "-" 면 Put/Call 둘 다 "-"
-# 6) 9.1에 22./23. 기타 투자판단... 이면 Put/Call 둘 다 "공시 확인 바람"
+# 1) 9.1이 "-" 면 Put/Call 둘 다 "-"
+# 2) 9.1 안에 22./23. 기타 투자판단에 참고할 사항이 있으면
+#    Put/Call 둘 다 "공시 확인 바람"
 # ==========================================================
 def _is_dash_91_section(text: str) -> bool:
     s = _clean_line(text)
@@ -224,7 +261,7 @@ def _is_dash_91_section(text: str) -> bool:
     return bool(re.fullmatch(r"-+", s))
 
 
-def _is_22_23_disclosure_reference(text: str) -> bool:
+def _contains_22_or_23_reference(text: str) -> bool:
     s = _clean_line(text)
     if not s:
         return False
@@ -240,7 +277,7 @@ def _is_22_23_disclosure_reference(text: str) -> bool:
 
 # ==========================================================
 # [Call Option 헤딩 / 종료 패턴]
-# - Call은 Put Option 텍스트 안에서만 잘라낸다
+# - Call은 Put Option 텍스트 안에서 잘라낸다
 # - Call 헤딩은 삭제하지 않고 같이 가져간다
 # ==========================================================
 CALL_START_PATTERNS = [
@@ -391,6 +428,7 @@ def _to_pct_text(cell: Any, min_v: float = None, max_v: float = None) -> str:
         return ""
     if max_v is not None and val > max_v:
         return ""
+
     if float(val).is_integer():
         return f"{int(val)}%"
     return f"{val}%"
@@ -547,12 +585,14 @@ def extract_call_ratio_and_ytc_from_text(text: str) -> Tuple[str, str]:
 
 # ==========================================================
 # [최종 파서]
-# 1. 먼저 9.1 전체를 Put에 넣고
-# 2. 그 Put 안에서 Call을 떼서
-# 3. Call은 Call 컬럼으로 보내고
-# 4. Put에서는 Call만 제거한다
-# 5. 9.1이 - 면 Put/Call 둘 다 -
-# 6. 9.1이 22./23. 이면 공시 확인 바람
+# 로직 순서
+# 1. 정정 보고서면 아래쪽 실제 본문 표에서만 9.1 찾기
+# 2. 먼저 9.1 전체를 Put에 넣고
+# 3. 그 Put 안에서 Call을 떼서
+# 4. Call은 Call 컬럼으로 보내고
+# 5. Put에서는 Call만 제거한다
+# 6. 9.1이 - 면 Put/Call 둘 다 -
+# 7. 9.1이 22./23. 이면 공시 확인 바람
 # ==========================================================
 def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
     title = clean_title(rec.get("title", "") or "")
@@ -566,7 +606,10 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         "YTC": "",
     }
 
-    lines = _lines_from_tables(tables)
+    # Put/Call 본문 추출용 tables 선택
+    target_tables = _select_target_tables_for_option_text(title, tables)
+
+    lines = _lines_from_tables(target_tables)
     corpus = _corpus_from_lines(lines)
 
     # 1) 9.1 전체 섹션 추출
@@ -576,41 +619,41 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
 
     section_91 = _clean_line(section_91)
 
-    # 5) 9.1이 "-" 이면 Put/Call 둘 다 "-"
-    if section_91 and _is_dash_91_section(section_91):
-        row["Put Option"] = "-"
-        row["Call Option"] = "-"
-        call_text = ""
-
-    # 6) 9.1이 22./23. 이면 Put/Call 둘 다 "공시 확인 바람"
-    elif section_91 and _is_22_23_disclosure_reference(section_91):
+    # 2) 9.1 자체를 못 찾으면 공시 확인 바람
+    if not section_91:
         row["Put Option"] = "공시 확인 바람"
         row["Call Option"] = "공시 확인 바람"
         call_text = ""
 
-    # 9.1 자체를 못 찾으면 공시 확인 바람
-    elif not section_91:
+    # 3) 9.1이 "-" 이면 Put/Call 둘 다 "-"
+    elif _is_dash_91_section(section_91):
+        row["Put Option"] = "-"
+        row["Call Option"] = "-"
+        call_text = ""
+
+    # 4) 9.1이 22./23. 참조형이면 Put/Call 둘 다 공시 확인 바람
+    elif _contains_22_or_23_reference(section_91):
         row["Put Option"] = "공시 확인 바람"
         row["Call Option"] = "공시 확인 바람"
         call_text = ""
 
     else:
-        # 1) 먼저 9.1 전체를 Put에 넣고
+        # 5) 먼저 9.1 전체를 Put 원본으로 잡는다
         put_text = section_91
 
-        # 2) 그 Put 안에서 Call을 떼서
+        # 6) 그 Put 안에서만 Call을 찾는다
         call_text = extract_call_option_text_from_section(put_text)
 
-        # 3) Call은 Call 컬럼으로 보내고
+        # 7) Call은 Call 컬럼으로 보낸다
         row["Call Option"] = call_text if call_text else "공시 확인 바람"
 
-        # 4) Put에서는 Call만 제거한다
+        # 8) Put에서는 Call만 제거한다
         if call_text:
             put_text = remove_call_option_text_from_section(put_text)
 
         row["Put Option"] = put_text if put_text else "공시 확인 바람"
 
-    # 4) Call 비율 / YTC : 표 key-value 우선
+    # 9) Call 비율 / YTC : 표 key-value 우선
     row["Call 비율"] = _safe_percent(
         scan_label_value_preferring_correction(
             tables,
@@ -627,7 +670,7 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         )
     )
 
-    # 5) 표 grid fallback
+    # 10) 표 grid fallback
     if not row["Call 비율"] or not row["YTC"]:
         table_ratio, table_ytc, _ = extract_call_ratio_ytc_from_table_grid(tables)
 
@@ -636,7 +679,7 @@ def parse_bond_option_record(rec: Dict[str, Any]) -> Dict[str, str]:
         if not row["YTC"]:
             row["YTC"] = table_ytc
 
-    # 6) Call 본문 fallback
+    # 11) Call 본문 fallback
     if (not row["Call 비율"] or not row["YTC"]) and call_text and call_text != "공시 확인 바람":
         ext_ratio, ext_ytc = extract_call_ratio_and_ytc_from_text(call_text)
 

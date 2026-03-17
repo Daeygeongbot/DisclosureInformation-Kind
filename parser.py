@@ -96,9 +96,6 @@ BOND_HEADERS = [
 # ==========================================================
 # Google Sheets
 # ==========================================================
-# [구글시트 열기]
-# - 서비스 계정 credentials로 Google Sheet open
-# - 환경변수가 없으면 바로 에러 발생
 def gs_open():
     if not GOOGLE_SHEET_ID or not GOOGLE_CREDENTIALS_JSON:
         raise RuntimeError(
@@ -110,9 +107,6 @@ def gs_open():
     return sh
 
 
-# [워크시트 보장]
-# - 시트가 이미 있으면 가져오고
-# - 없으면 새로 생성
 def ensure_ws(sh, title: str, rows: int = 2000, cols: int = 60):
     try:
         return sh.worksheet(title)
@@ -120,9 +114,6 @@ def ensure_ws(sh, title: str, rows: int = 2000, cols: int = 60):
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 
-# [헤더 보장]
-# - 1행 헤더가 다르면 시트를 clear 후 새 헤더 입력
-# - 구조가 달라졌을 때 맞춰주는 용도
 def ensure_header(ws, headers: List[str]):
     current = ws.row_values(1)
     if current != headers:
@@ -130,8 +121,6 @@ def ensure_header(ws, headers: List[str]):
         ws.update("A1", [headers])
 
 
-# [안전한 셀 접근]
-# - row 길이보다 큰 index 요청 시 에러 대신 "" 반환
 def safe_cell(row: List[str], idx: int) -> str:
     return row[idx] if idx < len(row) else ""
 
@@ -139,10 +128,6 @@ def safe_cell(row: List[str], idx: int) -> str:
 # ==========================================================
 # RAW loader
 # ==========================================================
-# [RAW_dump 로더]
-# - RAW_dump에 쌓여있는 행들을 acpt_no 단위로 묶음
-# - META / HEADER / DATA 구조를 읽어 DataFrame 리스트로 재구성
-# - 최종적으로 rec = {acpt_no, title, src_url, tables...} 형태 반환
 def load_raw_records(raw_ws) -> List[Dict[str, Any]]:
     values = raw_ws.get_all_values()
     if not values:
@@ -169,20 +154,17 @@ def load_raw_records(raw_ws) -> List[Dict[str, Any]]:
         for row in rows:
             row_type = safe_cell(row, 2).strip()
 
-            # META 행: 공시 제목 / 링크 / 카테고리 등 저장
             if row_type == "META":
                 meta["category"] = safe_cell(row, 3)
                 meta["title"] = safe_cell(row, 4)
                 meta["src_url"] = safe_cell(row, 5)
                 meta["run_ts"] = safe_cell(row, 6)
 
-            # HEADER 행: table index별 컬럼 헤더 저장
             elif row_type == "HEADER":
                 tix = safe_cell(row, 1).strip()
                 table_buckets.setdefault(tix, {"header": [], "data": []})
                 table_buckets[tix]["header"] = row[3:]
 
-            # DATA 행: 실제 테이블 body 저장
             elif row_type == "DATA":
                 tix = safe_cell(row, 1).strip()
                 table_buckets.setdefault(tix, {"header": [], "data": []})
@@ -200,7 +182,6 @@ def load_raw_records(raw_ws) -> List[Dict[str, Any]]:
             if width == 0:
                 continue
 
-            # 열 개수 맞추기
             header = header + [f"col_{i}" for i in range(len(header), width)]
             norm_data = [r + [""] * (width - len(r)) for r in data]
             dfs.append(pd.DataFrame(norm_data, columns=header))
@@ -223,9 +204,6 @@ def load_raw_records(raw_ws) -> List[Dict[str, Any]]:
 # ==========================================================
 # Common utils
 # ==========================================================
-# [기본 문자열 정리]
-# - None 방지
-# - 줄바꿈/다중 공백 정리
 def normalize_text(x: Any) -> str:
     if x is None:
         return ""
@@ -234,33 +212,22 @@ def normalize_text(x: Any) -> str:
     return s.strip()
 
 
-# [강한 정규화]
-# - 공백 제거 + 콜론 제거
-# - label 비교용
 def _norm(s: Any) -> str:
     return re.sub(r"\s+", "", str(s or "")).replace(":", "")
 
 
-# [라벨 정리]
-# - ①, (1), 1. 같은 앞번호 제거
-# - 표 라벨 비교용
 def _clean_label(s: Any) -> str:
     return re.sub(r"^([①-⑩]|\(\d+\)|\d+\.)+", "", _norm(s))
 
 
-# [한 줄 문자열화]
 def _single_line(s: Any) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip()
 
 
-# [날짜 비교용 숫자화]
-# - 2025년 03월 10일 -> 20250310
 def _norm_date(s: Any) -> str:
     return re.sub(r"[^\d]", "", str(s or ""))
 
 
-# [날짜 포맷 통일]
-# - 다양한 날짜 표현을 "YYYY-MM-DD" 형식으로 정리
 def _format_date(s: Any) -> str:
     txt = _single_line(s)
 
@@ -275,8 +242,6 @@ def _format_date(s: Any) -> str:
     return txt
 
 
-# [회사명 비교용 정규화]
-# - (주), 주식회사, ㈜ 제거 후 비교
 def norm_company_name(name: str) -> str:
     if not name:
         return ""
@@ -284,7 +249,6 @@ def norm_company_name(name: str) -> str:
     return _norm(n)
 
 
-# [첫 번째 비어있지 않은 값 반환]
 def first_nonempty(*vals):
     for v in vals:
         if normalize_text(v):
@@ -292,13 +256,10 @@ def first_nonempty(*vals):
     return ""
 
 
-# [키워드 포함 여부]
 def contains_any(text: str, keywords: List[str]) -> bool:
     return any(k in text for k in keywords)
 
 
-# [숫자형 문자열 -> float]
-# - %, 원, 콤마 등 제거 후 float 변환
 def parse_float_like(s):
     if s is None:
         return None
@@ -311,21 +272,18 @@ def parse_float_like(s):
         return None
 
 
-# [문자열 -> int]
 def parse_int(value: Any):
     s = normalize_text(value).replace(",", "")
     m = re.search(r"-?\d+", s)
     return int(m.group(0)) if m else None
 
 
-# [문자열 -> float]
 def parse_float(value: Any):
     s = normalize_text(value).replace(",", "")
     m = re.search(r"-?\d+(?:\.\d+)?", s)
     return float(m.group(0)) if m else None
 
 
-# [안전 int 변환]
 def _to_int(s: Any) -> Optional[int]:
     if s is None:
         return None
@@ -338,7 +296,6 @@ def _to_int(s: Any) -> Optional[int]:
         return None
 
 
-# [안전 float 변환]
 def _to_float(s: Any) -> Optional[float]:
     if s is None:
         return None
@@ -351,9 +308,6 @@ def _to_float(s: Any) -> Optional[float]:
         return None
 
 
-# [문장 안 최대 정수 찾기]
-# - 텍스트 안에 여러 숫자가 있을 때 가장 큰 숫자 반환
-# - 주식수 / 금액 추정에 자주 사용
 def _max_int_in_text(s: Any) -> Optional[int]:
     if not s:
         return None
@@ -367,9 +321,6 @@ def _max_int_in_text(s: Any) -> Optional[int]:
     return max(vals) if vals else None
 
 
-# [퍼센트 문자열 정리]
-# - 10 -> 10%
-# - 10.5 % -> 10.5%
 def clean_percent(value: str) -> str:
     s = normalize_text(value)
     if not s:
@@ -381,9 +332,6 @@ def clean_percent(value: str) -> str:
     return f"{m.group(0)}%" if m else s
 
 
-# [숫자 포맷팅]
-# - 정수는 1,234 형식
-# - 소수면 2자리까지
 def fmt_number(x):
     if x in (None, ""):
         return ""
@@ -396,28 +344,21 @@ def fmt_number(x):
     return f"{fx:,.2f}"
 
 
-# [원화 -> 억원]
 def fmt_eok_from_won(won):
     if won is None:
         return ""
     return f"{won / 100000000:.2f}"
 
 
-# [보고서명 정리]
-# - 자동복구 태그 제거
 def clean_title(title: str) -> str:
     return _single_line(title).replace("[자동복구대상]", "").strip()
 
 
-# [정정 공시 여부]
-# - 제목에 [정정] 또는 정정 포함 여부 판단
 def is_correction_title(title: str) -> bool:
     t = clean_title(title)
     return t.startswith("[정정]") or t.startswith("정정") or "[정정]" in t or "정정" in t
 
 
-# [시장 문자열 표준화]
-# - 다양한 표현을 코스닥 / 유가증권 / 코넥스 / 비상장으로 통일
 def normalize_market_value(value: Any) -> str:
     s = normalize_text(value)
     n = _norm(s)
@@ -459,14 +400,10 @@ def normalize_market_value(value: Any) -> str:
     return ""
 
 
-# [제목에서 시장 추정]
-# - [코] / [유] / [코넥스] 태그나 문구로 시장 인식
 def detect_market_from_title(title: str) -> str:
     return normalize_market_value(title)
 
 
-# [제목에서 공시 패밀리 인식]
-# - 유상증자 / CB / EB / BW 구분용
 def detect_report_family(title: str) -> str:
     for k in [
         "유상증자결정",
@@ -479,8 +416,6 @@ def detect_report_family(title: str) -> str:
     return ""
 
 
-# [제목에서 회사명 추출]
-# - [코] [정정] 등을 제거하고 앞부분 회사명 추출
 def extract_company_name_from_title(title: str) -> str:
     t = clean_title(title)
     t = re.sub(r"^\[(유|코|넥|코넥|KOSPI|KOSDAQ|KONEX)\]\s*", "", t).strip()
@@ -505,8 +440,6 @@ def extract_company_name_from_title(title: str) -> str:
     return parts[0].strip()
 
 
-# [유효한 날짜 문자열인지 판정]
-# - 날짜처럼 보이지만 사실 설명문인 것들을 제외
 def looks_like_valid_date(v: str) -> bool:
     v = _single_line(v)
     if not re.search(r"\d", v):
@@ -539,8 +472,6 @@ def looks_like_valid_date(v: str) -> bool:
     return True
 
 
-# [모든 테이블을 한 줄 텍스트 리스트로 변환]
-# - 옵션 본문 파싱 / 날짜 구간 파싱 등에 사용
 def all_text_lines(tables: List[pd.DataFrame]) -> List[str]:
     lines = []
     for df in tables:
@@ -552,8 +483,6 @@ def all_text_lines(tables: List[pd.DataFrame]) -> List[str]:
     return lines
 
 
-# [테이블 전체 텍스트 평탄화]
-# - 한 테이블의 모든 셀을 하나의 긴 문자열로 합침
 def flatten_table_text(table: pd.DataFrame) -> str:
     parts = []
     arr = table.fillna("").astype(str).values.tolist()
@@ -568,9 +497,6 @@ def flatten_table_text(table: pd.DataFrame) -> str:
 # ==========================================================
 # Pair helpers
 # ==========================================================
-# [2열 페어 추출]
-# - 행 내 인접 셀들을 (left, right) 쌍으로 저장
-# - 라벨-값 구조 탐색용
 def df_to_pairs(df: pd.DataFrame) -> List[Tuple[str, str]]:
     pairs = []
     arr = df.fillna("").astype(str).values.tolist()
@@ -586,7 +512,6 @@ def df_to_pairs(df: pd.DataFrame) -> List[Tuple[str, str]]:
     return pairs
 
 
-# [전체 테이블 페어 추출]
 def all_pairs_from_tables(tables: List[pd.DataFrame]) -> List[Tuple[str, str]]:
     out = []
     for df in tables:
@@ -594,7 +519,6 @@ def all_pairs_from_tables(tables: List[pd.DataFrame]) -> List[Tuple[str, str]]:
     return out
 
 
-# [왼쪽 라벨 키워드로 값 찾기]
 def find_value_by_left_keywords(pairs: List[Tuple[str, str]], keywords: List[str]) -> str:
     for left, right in pairs:
         if contains_any(left, keywords) and normalize_text(right):
@@ -602,7 +526,6 @@ def find_value_by_left_keywords(pairs: List[Tuple[str, str]], keywords: List[str
     return ""
 
 
-# [왼쪽 라벨 키워드로 숫자값 찾기]
 def find_numeric_value_by_keywords(pairs: List[Tuple[str, str]], keywords: List[str]):
     return parse_float(find_value_by_left_keywords(pairs, keywords))
 
@@ -610,10 +533,6 @@ def find_numeric_value_by_keywords(pairs: List[Tuple[str, str]], keywords: List[
 # ==========================================================
 # Table scanners
 # ==========================================================
-# [정정사항 표의 '정정후' 맵 추출]
-# - 정정 공시인 경우 '정정사항 / 정정전 / 정정후' 표를 우선 파싱
-# - item -> 정정후값 형태의 dict 생성
-# - 이후 실제 컬럼 추출 시 corr_after를 최우선으로 사용
 def extract_correction_after_map(dfs: List[pd.DataFrame]) -> Dict[str, str]:
     out: Dict[str, str] = {}
 
@@ -664,9 +583,6 @@ def extract_correction_after_map(dfs: List[pd.DataFrame]) -> Dict[str, str]:
             last_item = item
             after_val = ""
 
-            # -------------------------------
-            # [기존 로직] 정정후 컬럼에서 직접 읽기
-            # -------------------------------
             if 0 <= after_col < C:
                 v = str(arr[rr][after_col]).strip()
                 if (
@@ -676,14 +592,6 @@ def extract_correction_after_map(dfs: List[pd.DataFrame]) -> Dict[str, str]:
                 ):
                     after_val = _single_line(v)
 
-            # -------------------------------
-            # [추가 fallback]
-            # 정정후 칸이 비어 있는데 값이 한 칸 밀린 경우 복구
-            # 예:
-            # 항목 | 정정사유 | 정정전 | 정정후
-            # 6. 신주 발행가액 | 2,849 | 2,374 | ""
-            # -> 마지막 값 2,374를 정정후로 간주
-            # -------------------------------
             if not after_val:
                 tail_vals = []
                 for cc in range((item_col or 0) + 1, C):
@@ -705,9 +613,6 @@ def extract_correction_after_map(dfs: List[pd.DataFrame]) -> Dict[str, str]:
     return out
 
 
-# [라벨 주변 값 탐색]
-# - 표 안에서 label 후보를 찾고
-# - 오른쪽 / 아래 / 같은 행에서 실제 값을 찾아 반환
 def scan_label_value(dfs: List[pd.DataFrame], label_candidates: List[str]) -> str:
     cand_clean = {_clean_label(x) for x in label_candidates}
 
@@ -738,9 +643,6 @@ def scan_label_value(dfs: List[pd.DataFrame], label_candidates: List[str]) -> st
     return ""
 
 
-# [라벨 값 탐색 - 정정후 우선]
-# - 정정 공시면 corr_after에서 먼저 찾고
-# - 없으면 일반 표 스캔으로 fallback
 def scan_label_value_preferring_correction(
     dfs: List[pd.DataFrame],
     label_candidates: List[str],
@@ -759,8 +661,6 @@ def scan_label_value_preferring_correction(
     return scan_label_value(dfs, label_candidates)
 
 
-# [행 단위 최대 정수 탐색]
-# - 특정 키워드들이 포함된 행에서 숫자 후보 중 가장 적절한 큰 값 선택
 def find_row_best_int(
     dfs: List[pd.DataFrame],
     must_contain: List[str],
@@ -791,7 +691,6 @@ def find_row_best_int(
     return best
 
 
-# [행 단위 float 탐색]
 def find_row_best_float(dfs: List[pd.DataFrame], must_contain: List[str]) -> Optional[float]:
     keys = [_norm(x) for x in must_contain]
 
@@ -811,9 +710,6 @@ def find_row_best_float(dfs: List[pd.DataFrame], must_contain: List[str]) -> Opt
     return None
 
 
-# [라벨 기반 날짜 추출]
-# - 정정후 값 우선
-# - 표 내 라벨 주변에서 유효한 날짜 찾아 포맷팅
 def get_valid_date_by_labels(
     dfs: List[pd.DataFrame],
     labels: List[str],
@@ -859,7 +755,6 @@ def get_valid_date_by_labels(
     return ""
 
 
-# [테이블에서 시장 인식]
 def detect_market_from_tables(
     dfs: List[pd.DataFrame],
     corr_after: Optional[Dict[str, str]] = None,
@@ -875,7 +770,6 @@ def detect_market_from_tables(
     ]
     label_set = {_clean_label(x) for x in market_labels}
 
-    # 1순위: 정정공시 값 우선
     if corr_after:
         for k, v in corr_after.items():
             k_clean = _clean_label(k)
@@ -885,7 +779,6 @@ def detect_market_from_tables(
                 if market:
                     return market
 
-    # 2순위: 실제 표에서 라벨 주변 탐색
     for df in dfs:
         try:
             arr = df.fillna("").astype(str).values
@@ -928,7 +821,6 @@ def detect_market_from_tables(
                     if market:
                         return market
 
-    # 3순위: 표 전체 텍스트 보조 탐색
     for line in all_text_lines(dfs):
         line_norm = _norm(line)
         if any(_norm(lb) in line_norm for lb in market_labels):
@@ -939,9 +831,6 @@ def detect_market_from_tables(
     return ""
 
 
-# [테이블에서 회사명 인식]
-# - 회사명 관련 라벨을 우선 탐색
-# - 너무 긴 문장 / 비정상 텍스트는 제거
 def detect_company_from_tables(
     dfs: List[pd.DataFrame],
     corr_after: Optional[Dict[str, str]] = None,
@@ -970,9 +859,6 @@ def detect_company_from_tables(
 # ==========================================================
 # Rights-specific helpers
 # ==========================================================
-# [주식수 텍스트 파서]
-# - 보통 / 기타(종류주) / 합계 숫자를 문장 안에서 분리 추출
-# - 신규발행주식수 / 증자전주식수 파싱에 공통 사용
 def parse_shares_from_text(text: str) -> Tuple[int, int, int]:
     text_norm = _norm(text)
     text_norm = re.sub(r"202\d[년월일\.]?", "", text_norm)
@@ -995,7 +881,6 @@ def parse_shares_from_text(text: str) -> Tuple[int, int, int]:
     tvs = [int(re.sub(r"[,.]", "", x)) for x in m_tot if int(re.sub(r"[,.]", "", x)) >= 50]
     tv = tvs[-1] if tvs else 0
 
-    # 위 패턴으로 못 잡은 경우 마지막 큰 숫자를 fallback으로 사용
     if cv == 0 and ov == 0 and tv == 0:
         text_clean = text_norm
         for kw in [
@@ -1021,9 +906,6 @@ def parse_shares_from_text(text: str) -> Tuple[int, int, int]:
     return cv, ov, tv
 
 
-# [신규발행주식수 + 발행상품 추출]
-# - 신주의 종류와 수 / 발행예정주식수 근처를 읽어서
-# - 총 주식수와 발행상품(보통/우선/혼합) 추출
 def extract_issue_shares_and_type(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
@@ -1034,7 +916,6 @@ def extract_issue_shares_and_type(
     stock_type = "보통주식"
     best_amt = 0
 
-    # 1순위: 정정후 값에서 먼저 찾기
     if corr_after:
         for k, v in corr_after.items():
             k_norm = _norm(k)
@@ -1063,7 +944,6 @@ def extract_issue_shares_and_type(
                             stock_type = "보통주식, 우선주식" if "보통" in v_norm else "우선주식"
                         return best_amt, stock_type
 
-    # 2순위: 일반 테이블 블록 스캔
     for df in dfs:
         try:
             arr = df.astype(str).values
@@ -1125,7 +1005,6 @@ def extract_issue_shares_and_type(
                         stock_type = "보통주식, 우선주식" if "보통" in block_text else "우선주식"
                     return best_amt, stock_type
 
-    # 3순위: 단순 라벨 값 fallback
     val = scan_label_value(dfs, ["신주의 종류와 수", "발행예정주식", "발행예정주식수"])
     amt = _max_int_in_text(val)
     if amt and amt > 100:
@@ -1133,6 +1012,7 @@ def extract_issue_shares_and_type(
         return amt, stock_type
 
     return None, "보통주식"
+
 
 def extract_issue_shares_and_type_section1_exact(
     dfs: List[pd.DataFrame],
@@ -1193,7 +1073,6 @@ def extract_issue_shares_and_type_section1_exact(
                         return v
         return None
 
-    # 1순위: 정정공시
     if corr_after:
         for k, v in corr_after.items():
             if _is_section1_heading(k):
@@ -1224,7 +1103,6 @@ def extract_issue_shares_and_type_section1_exact(
                         return amt, "보통주식, 우선주식"
                     return amt, "보통주식"
 
-    # 2순위: 실제 표
     for df in dfs:
         try:
             arr = df.fillna("").astype(str).values
@@ -1289,10 +1167,6 @@ def choose_issue_shares_and_type(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
 ) -> Tuple[Optional[int], str]:
-    """
-    기존 로직 + 1번 섹션 exact 로직을 같이 돌리고
-    필요할 때만 새 로직으로 보정
-    """
     old_amt, old_type = extract_issue_shares_and_type(dfs, corr_after)
     new_amt, new_type = extract_issue_shares_and_type_section1_exact(dfs, corr_after)
 
@@ -1308,20 +1182,13 @@ def choose_issue_shares_and_type(
     if old_amt == new_amt:
         return old_amt, (old_type or new_type or "보통주식")
 
-    # 둘이 다르면 1. 신주의 종류와 수 섹션 전용 보정값 우선
     return new_amt, (new_type or old_type or "보통주식")
 
-# [증자전 주식수 추출]
-# - '증자전발행주식총수' 계열 표를 읽어서 총 발행주식수 추출
+
 def get_prev_shares_sum(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> Optional[int]:
     """
     증자전 주식수는 반드시
     '3. 증자전 발행주식총수 (주)' 섹션에서만 읽는다.
-
-    우선순위
-    1) 정정공시 corr_after 안의 '3. 증자전 발행주식총수 (주)' 계열
-    2) 실제 표에서 '3. 증자전 발행주식총수 (주)' 섹션 블록 스캔
-    3) 그 섹션 내 합계 우선, 없으면 보통주식 + 기타/종류/우선주식 합산
     """
 
     def _extract_section_share_total(text: str) -> Optional[int]:
@@ -1374,7 +1241,6 @@ def get_prev_shares_sum(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> 
             return False
         return bool(re.match(r"^\d+\s*[\.\)]\s*[가-힣A-Za-z]", raw))
 
-    # 1순위: 정정공시의 정정후 값에서 정확한 3번 항목만
     if corr_after:
         for k, v in corr_after.items():
             k_raw = normalize_text(k)
@@ -1384,7 +1250,6 @@ def get_prev_shares_sum(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> 
                 if amt:
                     return amt
 
-    # 2순위: 실제 표에서 3. 증자전 발행주식총수(주) 섹션만 스캔
     for df in dfs:
         try:
             arr = df.astype(str).values
@@ -1417,18 +1282,12 @@ def get_prev_shares_sum(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> 
     return None
 
 
-# [기준주가 추출]
-# - 기준주가 / 기준발행가액 섹션만 정밀하게 읽음
-# - 확정발행가나 날짜 숫자가 섞여 들어오는 문제를 최대한 방지
 def get_base_price_by_exact_section(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
 ) -> Optional[int]:
     """
     기준주가는 반드시 '7. 기준주가' 섹션에서만 추출한다.
-    - 정정공시는 corr_after에서 '7. 기준주가' 항목 우선
-    - 일반 공시는 실제 표에서 '7. 기준주가' 섹션 블록만 읽음
-    - 다른 라벨(기준발행가액 등)에서 넓게 찾지 않음
     """
 
     def _extract_valid_prices(text: str) -> List[int]:
@@ -1522,26 +1381,12 @@ def get_base_price_by_exact_section(
     return None
 
 
-# [확정/예정 발행가 추출]
-# - 유상증자 공시에서 "6. 신주 발행가액" 섹션을 최우선으로 읽음
-# - 정정공시는 corr_after 우선
-# - 못 찾으면 기존 일반 발행가액 라벨로 fallback
 def get_price_by_exact_section(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
 ) -> Optional[int]:
     """
     확정발행가(원)은 반드시 '6. 신주 발행가액' 섹션에서만 가져온다.
-
-    우선순위
-    1) 정정공시 corr_after 안의 '6. 신주 발행가액' 계열
-    2) 실제 표에서 '6. 신주 발행가액' 섹션 블록 스캔
-
-    규칙
-    - '확정발행가' / '정정후' / '변경후' 영역을 최우선으로 본다
-    - 같은 줄에 예정발행가 + 확정발행가가 같이 있으면 확정발행가를 우선
-    - 그 다음 보통주식(원) 값 중 마지막 값을 우선
-    - 다른 섹션 / 일반 발행가액 라벨 fallback 금지
     """
 
     def _first_nonempty_cell(row_vals) -> str:
@@ -1687,17 +1532,14 @@ def get_price_by_exact_section(
 
         txt = normalize_text(text)
 
-        # 1) 정정후 / 변경후 우선
         v = _extract_price_after_markers(txt, [r"정정후", r"변경후"])
         if v is not None:
             return v
 
-        # 2) 확정발행가 / 확정발행가액 우선
         v = _extract_price_after_markers(txt, [r"확정발행가액", r"확정발행가"])
         if v is not None:
             return v
 
-        # 3) 일반 보통주식 가격
         v = _extract_common_stock_price_from_text(txt)
         if v is not None:
             return v
@@ -1715,7 +1557,6 @@ def get_price_by_exact_section(
         ]
         block_text = " ".join([x for x in row_texts if x])
 
-        # 1순위: 각 행에서 정정후 / 변경후 / 확정발행가 뒤쪽 값
         for row_text in row_texts:
             if not row_text:
                 continue
@@ -1727,7 +1568,6 @@ def get_price_by_exact_section(
             if v is not None:
                 return v
 
-        # 2순위: 블록 전체에서 정정후 / 변경후 / 확정발행가 뒤쪽 값
         v = _extract_price_after_markers(
             block_text,
             [r"정정후", r"변경후", r"확정발행가액", r"확정발행가"],
@@ -1735,8 +1575,6 @@ def get_price_by_exact_section(
         if v is not None:
             return v
 
-        # 3순위: 같은 줄에 예정발행가 + 확정발행가가 같이 있으면,
-        #       보통주식 값 중 마지막 값을 사용
         if ("예정발행가" in block_text or "예정발행가액" in block_text) and (
             "확정발행가" in block_text or "확정발행가액" in block_text
         ):
@@ -1744,7 +1582,6 @@ def get_price_by_exact_section(
             if v is not None:
                 return v
 
-        # 4순위: 행을 오른쪽 기준으로 뒤에서부터 스캔
         for row in block_rows:
             row_clean = [normalize_text(x) for x in row]
 
@@ -1757,14 +1594,12 @@ def get_price_by_exact_section(
                         if v is not None and v >= 50:
                             return v
 
-        # 5순위: 블록 전체 일반 fallback
         v = _extract_price_preferring_after(block_text)
         if v is not None:
             return v
 
         return None
 
-    # 1순위: 정정공시 corr_after
     if corr_after:
         for k, v in corr_after.items():
             k_raw = normalize_text(k)
@@ -1776,7 +1611,6 @@ def get_price_by_exact_section(
                 if price is not None:
                     return price
 
-    # 2순위: 실제 표의 6번 섹션
     for df in dfs:
         try:
             arr = df.fillna("").astype(str).values
@@ -1808,9 +1642,6 @@ def get_price_by_exact_section(
     return None
 
 
-# [자금용도 + 자금합계 추출]
-# - 운영자금 / 채무상환자금 등 6개 카테고리 읽기
-# - 자금용도 텍스트와 합산 금액(won)을 함께 반환
 def extract_fund_use_and_amount(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
@@ -1861,9 +1692,6 @@ def extract_fund_use_and_amount(
     return ", ".join(uses), (total_sum if total_sum > 0 else None)
 
 
-# [유상증자 투자자 추출]
-# - 제3자배정대상자 / 배정대상자 / 법인명 컬럼 등에서 투자자명 추출
-# - 관계/합계/비고 같은 잡음을 blacklist로 제거
 def extract_investors_rights(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> str:
     investors = []
     blacklist = [
@@ -1983,8 +1811,6 @@ def extract_investors_rights(dfs: List[pd.DataFrame], corr_after: Dict[str, str]
 # ==========================================================
 # Bond-specific helpers
 # ==========================================================
-# [제목 기반 채권 구분 코드]
-# - CB / EB / BW 반환
 def bond_type_code(title: str) -> str:
     t = title.replace(" ", "")
     if "전환사채권발행결정" in t:
@@ -1996,8 +1822,6 @@ def bond_type_code(title: str) -> str:
     return ""
 
 
-# [제목 기반 발행상품명]
-# - 전환사채 / 교환사채 / 신주인수권부사채 반환
 def bond_type_product_name(title: str) -> str:
     t = title.replace(" ", "")
     if "전환사채권발행결정" in t:
@@ -2009,21 +1833,11 @@ def bond_type_product_name(title: str) -> str:
     return ""
 
 
-# [주식연계채권 발행상품 추출]
-# - "사채의 종류" 같은 표 라벨에서 실제 상품명 추출
-# - 못 찾으면 제목 기반 fallback
 def extract_product_type_bond(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
     title: str,
 ) -> str:
-    """
-    주식연계채권 발행상품 추출 우선순위:
-    1) 정정공시의 corr_after에서 '1. 사채의 종류' 계열 값
-    2) 실제 표에서 '1. 사채의 종류' 라벨의 오른쪽 / 아래 값
-    3) 같은 행 전체 문자열에서 추출
-    4) 마지막 fallback으로 제목 기반 전환사채/교환사채/BW
-    """
     primary_labels = [
         "1. 사채의 종류",
         "1.사채의종류",
@@ -2146,8 +1960,6 @@ def extract_product_type_bond(
     return bond_type_product_name(title)
 
 
-# [주식연계채권 납입일 추출]
-# - '납입일'이 있는 줄 주변에서 날짜 추출
 def extract_payment_date_bond(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> str:
     if corr_after:
         for k, v in corr_after.items():
@@ -2185,9 +1997,6 @@ def extract_payment_date_bond(dfs: List[pd.DataFrame], corr_after: Dict[str, str
     return ""
 
 
-# [주식연계채권 자금용도 추출]
-# - 금액이 실제 있는 자금항목만 남김
-# - 타법인증권취득자금은 표준명으로 통일
 def extract_fund_usage_bond(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> str:
     target_keys = [
         "시설자금",
@@ -2249,9 +2058,6 @@ def extract_fund_usage_bond(dfs: List[pd.DataFrame], corr_after: Dict[str, str])
     )
 
 
-# [주식연계채권 투자자 추출]
-# - 대상자명 / 법인명 / 인수인 등에서 투자자 이름 수집
-# - 펀드명/조합명도 어느 정도 허용
 def extract_investors_bond(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> str:
     investors = []
     blacklist = [
@@ -2394,18 +2200,17 @@ def extract_investors_bond(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) 
 
     return _single_line(", ".join(final_investors[:15]))
 
+
 def _extract_dates_from_text(text: str) -> List[str]:
     if not text:
         return []
 
     found = []
 
-    # 2026년 03월 10일 / 2026-03-10 / 2026.03.10
     for m in re.finditer(r"(\d{4})[-년\./\s]+(\d{1,2})[-월\./\s]+(\d{1,2})", str(text)):
         d = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
         found.append(d)
 
-    # 20260310
     for m in re.finditer(r"\b(\d{4})(\d{2})(\d{2})\b", str(text)):
         d = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
         found.append(d)
@@ -2432,7 +2237,6 @@ def extract_period_dates_from_tables(
         t = _norm(text)
         return any(k in t for k in keys)
 
-    # 1순위: 정정공시 정정후 값
     if corr_after:
         for k, v in corr_after.items():
             if _match_period_label(k):
@@ -2442,7 +2246,6 @@ def extract_period_dates_from_tables(
                 if len(dates) == 1:
                     return dates[0], ""
 
-    # 2순위: 실제 표 행 스캔
     for df in dfs:
         try:
             arr = df.fillna("").astype(str).values
@@ -2469,7 +2272,6 @@ def extract_period_dates_from_tables(
                 if len(dates) == 1:
                     return dates[0], ""
 
-    # 3순위: 라벨 기반 fallback
     val = scan_label_value_preferring_correction(
         dfs,
         period_keywords,
@@ -2481,7 +2283,6 @@ def extract_period_dates_from_tables(
     if len(dates) == 1:
         return dates[0], ""
 
-    # 4순위: 전체 라인 fallback
     lines = all_text_lines(dfs)
     for i, line in enumerate(lines):
         if _match_period_label(line):
@@ -2496,6 +2297,164 @@ def extract_period_dates_from_tables(
                 return dates[0], dates[1]
             if len(dates) == 1:
                 return dates[0], ""
+
+    return "", ""
+
+
+# ==========================================================
+# Bond share/ratio helpers (추가)
+# ==========================================================
+def _extract_share_ratio_pair_from_text(
+    text: str,
+    share_labels: List[str],
+    ratio_labels: List[str],
+) -> Tuple[str, str]:
+    """
+    예:
+    - '5,000,000 3.7' -> ('5,000,000', '3.7%')
+    - '전환에 따라 발행할 주식수 5,000,000 주식총수 대비 비율(%) 3.7'
+      -> ('5,000,000', '3.7%')
+    """
+    txt = normalize_text(text)
+    if not txt:
+        return "", ""
+
+    txt = re.sub(r"20\d{2}[-년\./\s]+\d{1,2}[-월\./\s]+\d{1,2}", " ", txt)
+    txt = re.sub(r"\b20\d{6}\b", " ", txt)
+    txt = re.sub(r"주\s*\d+\)\s*", " ", txt)
+    txt = normalize_text(txt)
+
+    def _nums(sub: str) -> List[float]:
+        toks = re.findall(r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?", sub)
+        out = []
+        for tok in toks:
+            raw = tok.replace(",", "")
+            try:
+                val = float(raw) if "." in raw else int(raw)
+                out.append(val)
+            except Exception:
+                continue
+        return out
+
+    share_val = ""
+    ratio_val = ""
+
+    for lb in share_labels:
+        m = re.search(re.escape(lb), txt)
+        if not m:
+            continue
+
+        sub = txt[m.end():]
+        nums = _nums(sub)
+        for v in nums:
+            if float(v).is_integer():
+                iv = int(v)
+                if iv >= 1000 and iv not in [2024, 2025, 2026, 2027]:
+                    share_val = f"{iv:,}"
+                    break
+        if share_val:
+            break
+
+    for lb in ratio_labels:
+        m = re.search(re.escape(lb), txt)
+        if not m:
+            continue
+
+        sub = txt[m.end():]
+        nums = _nums(sub)
+        cands = []
+        for v in nums:
+            fv = float(v)
+            if 0 <= fv <= 100:
+                cands.append(fv)
+
+        if cands:
+            ratio_val = f"{cands[-1]:g}%"
+            break
+
+    if share_val and ratio_val:
+        return share_val, ratio_val
+
+    nums = _nums(txt)
+    if not nums:
+        return share_val, ratio_val
+
+    if not share_val:
+        big_ints = []
+        for v in nums:
+            if float(v).is_integer():
+                iv = int(v)
+                if iv >= 1000 and iv not in [2024, 2025, 2026, 2027]:
+                    big_ints.append(iv)
+        if big_ints:
+            share_val = f"{big_ints[0]:,}"
+
+    if not ratio_val:
+        small_nums = []
+        for v in nums:
+            fv = float(v)
+            if 0 <= fv <= 100:
+                small_nums.append(fv)
+        if small_nums:
+            ratio_val = f"{small_nums[-1]:g}%"
+
+    return share_val, ratio_val
+
+
+def _extract_share_ratio_from_footnotes(
+    dfs: List[pd.DataFrame],
+    share_labels: List[str],
+    ratio_labels: List[str],
+) -> Tuple[str, str]:
+    """
+    정정사항 표 아래쪽 footnote 블록(주1) / 주2) ...)까지 내려가서
+    전환주식수 / 비율을 다시 확인
+    """
+    lines = [normalize_text(x) for x in all_text_lines(dfs) if normalize_text(x)]
+    if not lines:
+        return "", ""
+
+    target_norms = [_norm(x) for x in share_labels + ratio_labels]
+
+    for i, line in enumerate(lines):
+        if not re.match(r"^주\s*\d+\)", line):
+            continue
+
+        block = [line]
+        for j in range(i + 1, min(i + 6, len(lines))):
+            nxt = lines[j]
+
+            if re.match(r"^주\s*\d+\)", nxt):
+                break
+            if re.match(r"^\d+\s*[\.\)]\s*[가-힣A-Za-z]", nxt):
+                break
+
+            block.append(nxt)
+
+        merged = " ".join(block)
+        merged_norm = _norm(merged)
+
+        if any(tn in merged_norm for tn in target_norms):
+            s, r = _extract_share_ratio_pair_from_text(
+                merged,
+                share_labels,
+                ratio_labels,
+            )
+            if s or r:
+                return s, r
+
+    for i in range(len(lines)):
+        merged = " ".join(lines[i:i + 4])
+        merged_norm = _norm(merged)
+
+        if any(tn in merged_norm for tn in target_norms):
+            s, r = _extract_share_ratio_pair_from_text(
+                merged,
+                share_labels,
+                ratio_labels,
+            )
+            if s or r:
+                return s, r
 
     return "", ""
 
@@ -2606,7 +2565,6 @@ def _extract_text_from_block_rows(
 
     label_norms = [_norm(x) for x in label_keywords]
 
-    # 1순위: 같은 행에서 라벨 오른쪽 값
     for row in block_rows:
         cleaned = [normalize_text(x) for x in row]
         normed = [_norm(x) for x in cleaned]
@@ -2622,7 +2580,6 @@ def _extract_text_from_block_rows(
                 if raw:
                     return raw
 
-    # 2순위: 블록 전체 텍스트에서 사모/공모 판별
     block_text = " ".join(
         [" ".join([normalize_text(x) for x in row if normalize_text(x)]) for row in block_rows]
     )
@@ -2631,7 +2588,6 @@ def _extract_text_from_block_rows(
     if "공모" in block_text and "사모" not in block_text:
         return "공모"
 
-    # 3순위: 블록 첫 행에서 라벨 제거 후 반환
     first_text = " ".join([normalize_text(x) for x in block_rows[0] if normalize_text(x)])
     first_text = _clean_section_value_text(first_text, label_keywords)
     if first_text:
@@ -2650,7 +2606,6 @@ def _extract_int_from_block_rows(
 
     label_norms = [_norm(x) for x in label_keywords]
 
-    # 1순위: 라벨 오른쪽 셀
     for row in block_rows:
         cleaned = [normalize_text(x) for x in row]
         normed = [_norm(x) for x in cleaned]
@@ -2665,7 +2620,6 @@ def _extract_int_from_block_rows(
                 if nums:
                     return max(nums)
 
-                # 같은 행 fallback
                 row_nums = []
                 for cand in cleaned:
                     v = _to_int(cand)
@@ -2674,7 +2628,6 @@ def _extract_int_from_block_rows(
                 if row_nums:
                     return max(row_nums)
 
-    # 2순위: 블록 전체 fallback
     for row in block_rows:
         row_text = " ".join([normalize_text(x) for x in row if normalize_text(x)])
         if any(lb in _norm(row_text) for lb in label_norms):
@@ -2698,7 +2651,6 @@ def _extract_percent_from_block_rows(
 
     label_norms = [_norm(x) for x in label_keywords]
 
-    # 1순위: 라벨 오른쪽 셀
     for row in block_rows:
         cleaned = [normalize_text(x) for x in row]
         normed = [_norm(x) for x in cleaned]
@@ -2714,7 +2666,6 @@ def _extract_percent_from_block_rows(
                     if v is not None:
                         return f"{v:g}%"
 
-                # 같은 행 fallback
                 for cand in cleaned:
                     if "%" in cand:
                         return clean_percent(cand)
@@ -2735,7 +2686,6 @@ def extract_bond_method_from_section8(
     """
     section_labels = ["사채발행방법", "모집방법", "모집방식", "발행방법"]
 
-    # 1순위: 정정공시
     if corr_after:
         for k, v in corr_after.items():
             if _is_numbered_section_heading(k, 8, section_labels):
@@ -2754,7 +2704,6 @@ def extract_bond_method_from_section8(
                         return "공모"
                     return val
 
-    # 2순위: 실제 표에서 8번 섹션
     block_rows = _get_section_block_rows(dfs, 8, section_labels, max_rows=6)
     val = _extract_text_from_block_rows(block_rows, section_labels)
     if val:
@@ -2769,10 +2718,14 @@ def extract_bond_shares_and_ratio_from_section9(
     bond_kind: str,
 ) -> Tuple[str, str]:
     """
-    전환주식수 / 주식총수대비 비율은 반드시 9번 섹션에서만 추출
-    CB: 9. 전환에 관한 사항
-    EB: 9. 교환에 관한 사항
-    BW: 9. 권리행사에 관한 사항 / 신주인수권에 관한 사항
+    전환주식수 / 주식총수대비 비율 추출
+
+    우선순위
+    1) 정정공시 corr_after 안의 복합값 분리 파싱
+       예: '5,000,000 3.7'
+    2) 실제 9번 섹션 블록
+    3) 9번 섹션에 '주1) 정정후' 같은 placeholder가 있으면
+       아래 footnote 블록까지 내려가서 재확인
     """
     if bond_kind == "CB":
         section_titles = ["전환에 관한 사항"]
@@ -2789,7 +2742,7 @@ def extract_bond_shares_and_ratio_from_section9(
             "교환대상주식수",
             "주식수",
         ]
-    else:  # BW
+    else:
         section_titles = ["권리행사에 관한 사항", "신주인수권에 관한 사항"]
         share_labels = [
             "행사주식수",
@@ -2807,26 +2760,27 @@ def extract_bond_shares_and_ratio_from_section9(
     share_val = ""
     ratio_val = ""
 
-    # 1순위: 정정공시
     if corr_after:
         for k, v in corr_after.items():
-            k_n = _norm(k)
+            k_norm = _norm(k)
 
-            if not share_val and any(_norm(lb) in k_n for lb in share_labels):
-                num = _to_int(v)
-                if num is not None and num > 0:
-                    share_val = f"{num:,}"
+            if any(_norm(lb) in k_norm for lb in share_labels + ratio_labels):
+                merged = f"{normalize_text(k)} {normalize_text(v)}"
+                s, r = _extract_share_ratio_pair_from_text(
+                    merged,
+                    share_labels,
+                    ratio_labels,
+                )
 
-            if not ratio_val and any(_norm(lb) in k_n for lb in ratio_labels):
-                if "%" in str(v):
-                    ratio_val = clean_percent(str(v))
-                else:
-                    fv = _to_float(v)
-                    if fv is not None:
-                        ratio_val = f"{fv:g}%"
+                if s and not share_val:
+                    share_val = s
+                if r and not ratio_val:
+                    ratio_val = r
 
-    # 2순위: 실제 표에서 9번 섹션
-    block_rows = _get_section_block_rows(dfs, 9, section_titles, max_rows=10)
+                if share_val and ratio_val:
+                    return share_val, ratio_val
+
+    block_rows = _get_section_block_rows(dfs, 9, section_titles, max_rows=12)
 
     if block_rows:
         if not share_val:
@@ -2837,15 +2791,58 @@ def extract_bond_shares_and_ratio_from_section9(
         if not ratio_val:
             ratio_val = _extract_percent_from_block_rows(block_rows, ratio_labels)
 
+        if not share_val or not ratio_val:
+            block_text = " ".join(
+                [
+                    " ".join([normalize_text(x) for x in row if normalize_text(x)])
+                    for row in block_rows
+                ]
+            )
+            s, r = _extract_share_ratio_pair_from_text(
+                block_text,
+                share_labels,
+                ratio_labels,
+            )
+
+            if s and not share_val:
+                share_val = s
+            if r and not ratio_val:
+                ratio_val = r
+
+        has_placeholder = any(
+            re.search(r"주\s*\d+\)\s*정정(?:전|후)", normalize_text(cell))
+            for row in block_rows
+            for cell in row
+        )
+
+        if has_placeholder and (not share_val or not ratio_val):
+            s, r = _extract_share_ratio_from_footnotes(
+                dfs,
+                share_labels,
+                ratio_labels,
+            )
+            if s and not share_val:
+                share_val = s
+            if r and not ratio_val:
+                ratio_val = r
+
+    if not share_val or not ratio_val:
+        s, r = _extract_share_ratio_from_footnotes(
+            dfs,
+            share_labels,
+            ratio_labels,
+        )
+        if s and not share_val:
+            share_val = s
+        if r and not ratio_val:
+            ratio_val = r
+
     return share_val, ratio_val
 
 
 # ==========================================================
 # Parsers
 # ==========================================================
-# [유상증자 레코드 파서]
-# - RAW record 하나를 RIGHTS_HEADERS 구조 row로 변환
-# - 누락 컬럼 / 의심 컬럼도 함께 반환
 def parse_rights_record(rec: Dict[str, Any]):
     title = clean_title(rec["title"])
     tables = rec["tables"]
@@ -3000,9 +2997,6 @@ def parse_rights_record(rec: Dict[str, Any]):
     return row, missing, suspicious
 
 
-# [주식연계채권 레코드 파서]
-# - RAW record 하나를 BOND_HEADERS 구조 row로 변환
-# - CB / EB / BW 공통 로직
 def parse_bond_record(rec: Dict[str, Any]):
     title = clean_title(rec["title"])
     tables = rec["tables"]
@@ -3075,7 +3069,6 @@ def parse_bond_record(rec: Dict[str, Any]):
     )
     row["납입일"] = extract_payment_date_bond(tables, corr_after)
 
-    # 모집방식: 반드시 8. 사채발행방법
     exact_method = extract_bond_method_from_section8(tables, corr_after)
     row["모집방식"] = exact_method or scan_label_value_preferring_correction(
         tables,
@@ -3091,7 +3084,6 @@ def parse_bond_record(rec: Dict[str, Any]):
         50,
     )
 
-    # 전환주식수 / 주식총수대비 비율: 반드시 9번 섹션
     exact_share_cnt, exact_share_ratio = extract_bond_shares_and_ratio_from_section9(
         tables,
         corr_after,
@@ -3163,8 +3155,6 @@ def parse_bond_record(rec: Dict[str, Any]):
 # ==========================================================
 # Upsert helpers
 # ==========================================================
-# [특정 키 컬럼값으로 시트 행 찾기]
-# - 현재는 접수번호 기반 update 여부 판단에 사용
 def find_row_by_key(ws, key_header: str, key_value: str) -> Optional[int]:
     vals = ws.get_all_values()
     if not vals:
@@ -3181,12 +3171,6 @@ def find_row_by_key(ws, key_header: str, key_value: str) -> Optional[int]:
     return None
 
 
-# [이벤트 단위 기존 행 찾기]
-# - 접수번호가 달라도 같은 이벤트라고 판단되면 update 가능하도록 보조 탐색
-# - 기준:
-# 1) 회사명 정규화 동일
-# 2) 최초 이사회결의일 동일
-# 3) bond인 경우 구분(CB/EB/BW)도 동일
 def find_event_row(
     ws,
     headers: List[str],
@@ -3222,10 +3206,6 @@ def find_event_row(
     return None
 
 
-# [구조화 row upsert]
-# - 1순위: 접수번호로 기존 행 탐색
-# - 2순위: 동일 이벤트(회사명+최초이사회결의일, bond면 구분 포함) 탐색
-# - 있으면 UPDATE, 없으면 APPEND
 def upsert_structured_row(
     ws,
     headers: List[str],
@@ -3234,17 +3214,10 @@ def upsert_structured_row(
 ):
     row_values = [row_dict.get(h, "") for h in headers]
 
-    # 동일 접수번호일 때만 UPDATE
     target_row = find_row_by_key(ws, "접수번호", str(row_dict.get("접수번호", "")))
     end_col = gspread.utils.rowcol_to_a1(1, len(headers)).rstrip("1")
 
     if target_row:
-        # --------------------------------------------------
-        # bond 시트는 옵션 전용 컬럼 기존값 보존
-        # main_parse.py가 먼저 돌고
-        # main_option.py가 나중에 옵션 4개 컬럼만 갱신하는 구조이므로
-        # parser 단계에서 빈값으로 덮어쓰지 않도록 보호
-        # --------------------------------------------------
         if sheet_type == "bond":
             existing_row = ws.row_values(target_row)
             preserve_cols = ["Put Option", "Call Option", "Call 비율", "YTC"]
@@ -3257,14 +3230,12 @@ def upsert_structured_row(
                 new_val = row_dict.get(col, "")
                 old_val = safe_cell(existing_row, idx)
 
-                # 새 값이 비어 있으면 기존 값 유지
                 if not normalize_text(new_val):
                     row_values[idx] = old_val
 
         ws.update(f"A{target_row}:{end_col}{target_row}", [row_values])
         return "UPDATE", target_row
 
-    # 접수번호가 다르면 무조건 APPEND
     ws.append_row(row_values, value_input_option="RAW")
     return "APPEND", None
 
@@ -3272,11 +3243,6 @@ def upsert_structured_row(
 # ==========================================================
 # Runner
 # ==========================================================
-# [메인 실행 함수]
-# - 시트 오픈 / 헤더 보장
-# - RAW_dump 레코드 로드
-# - 공시 타입별 parser 실행
-# - 결과를 rights / bond 시트에 upsert
 def run_parser():
     sh = gs_open()
 
@@ -3334,6 +3300,5 @@ def run_parser():
     print(f"[DONE] ok={ok} skip={skip} fail={fail}")
 
 
-# [직접 실행 진입점]
 if __name__ == "__main__":
     run_parser()

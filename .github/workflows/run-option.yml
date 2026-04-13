@@ -2,7 +2,7 @@ name: KIND공시 - Put&Call 전용 액션
 
 on:
   workflow_run:
-    workflows: ["KIND Pipeline - RAW + Parse"]
+    workflows: ["KIND공시 - RAW + Parse"]
     types:
       - completed
   workflow_dispatch:
@@ -38,5 +38,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run option parser
-        run: python main_option.py
+      - name: Run bond option parser
+        run: python main_parse_bond_option.py

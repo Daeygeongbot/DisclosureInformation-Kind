@@ -35,11 +35,22 @@ def ensure_ws(sh, title: str, rows: int = 2000, cols: int = 60):
     except gspread.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
-def ensure_header(ws, headers: List[str]):
+def ensure_header(ws, headers):
     current = ws.row_values(1)
-    if current != headers:
-        ws.clear()
+
+    # 시트가 비어 있으면 헤더만 생성
+    if not current:
         ws.update("A1", [headers])
+        return
+
+    # 기존 데이터가 있는 시트는 자동 삭제 금지
+    if current != headers:
+        raise RuntimeError(
+            "헤더 불일치로 중단합니다. "
+            "기존 데이터를 지우지 않기 위해 자동 clear를 막았습니다.\n"
+            f"현재 헤더: {current}\n"
+            f"기대 헤더: {headers}"
+        )
 
 def safe_cell(row: List[str], idx: int) -> str:
     return row[idx] if idx < len(row) else ""

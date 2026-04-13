@@ -15,7 +15,6 @@ GOOGLE_CREDENTIALS_JSON = (
 
 RAW_SHEET_NAME = os.getenv("DUMP_SHEET_NAME", "RAW_dump")
 RIGHTS_SHEET_NAME = os.getenv("RIGHTS_SHEET_NAME", "K_유상증자")
-BONUS_SHEET_NAME = os.getenv("BONUS_SHEET_NAME", "K_무상증자")
 BOND_SHEET_NAME = os.getenv("BOND_SHEET_NAME", "K_주식연계채권")
 
 RUN_ONLY_ACPTNO = os.getenv("RUN_ONLY_ACPTNO", "").strip()
@@ -853,8 +852,10 @@ def upsert_structured_row(
                 if not normalize_text(new_val):
                     row_values[idx] = old_val
 
+        # 기존 공시는 원래 위치에서만 업데이트
         ws.update(f"A{target_row}:{end_col}{target_row}", [row_values])
         return "UPDATE", target_row
 
-    ws.append_row(row_values, value_input_option="RAW")
-    return "APPEND", None
+    # 신규 공시만 헤더 바로 아래 삽입
+    ws.insert_row(row_values, index=2, value_input_option="RAW")
+    return "INSERT_TOP", 2

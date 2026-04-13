@@ -1,10 +1,13 @@
 # 유상증자 + 무상증자 통합 파서
 # - 저장 탭은 기존 K_유상증자 하나만 사용
 # - 컬럼은 기존 유상증자 컬럼 구조 + 맨 앞 '구분'만 추가
-# - 구분: 유 / 무 / 유무
-# - 무상증자/유무상증자는 기존 유상증자 컬럼에 맞춰 넣고, 해당 없는 값은 공란 처리
+# - 구분: 유 / 무
+# - 유무상증자결정은 '유' row + '무' row 2줄로 저장
+# - 보고서명은 원래 제목 그대로 유지해서 유무상 보고서 여부가 남도록 처리
+# - 컬럼 추가 없이, 내부적으로만 (접수번호 + 구분) 기준 upsert
 
 import re
+import time
 from typing import Dict, Any, List, Tuple, Optional
 
 import pandas as pd
@@ -17,7 +20,6 @@ from parse_common import (
     ensure_ws,
     ensure_header,
     load_raw_records,
-    upsert_structured_row,
     clean_title,
     is_correction_title,
     extract_correction_after_map,
@@ -115,9 +117,120 @@ BONUS_REQUIRED_HEADERS = [
     "접수번호",
 ]
 
+KIND_IDX = RIGHTS_BONUS_HEADERS.index("구분")
+RCEPT_IDX = RIGHTS_BONUS_HEADERS.index("접수번호")
+
 
 def _blank_row() -> Dict[str, str]:
     return {h: "" for h in RIGHTS_BONUS_HEADERS}
+
+
+# ==========================================================
+# 로컬 upsert helper
+# - 컬럼은 그대로 두고, (접수번호 + 구분) 기준으로 row 식별
+# ==========================================================
+def _col_to_a1(n: int) -> str:
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _pad_row_values(values: List[Any]) -> List[str]:
+    vals = [str(v).strip() for v in values]
+    if len(vals) < len(RIGHTS_BONUS_HEADERS):
+        vals += [""] * (len(RIGHTS_BONUS_HEADERS) - len(vals))
+    return vals[: len(RIGHTS_BONUS_HEADERS)]
+
+
+def _row_dict_to_values(row: Dict[str, Any]) -> List[str]:
+    return [str(row.get(h, "")).strip() for h in RIGHTS_BONUS_HEADERS]
+
+
+def _sheet_key_from_values(values: List[str]) -> Tuple[str, str]:
+    values = _pad_row_values(values)
+    return values[RCEPT_IDX].strip(), values[KIND_IDX].strip()
+
+
+def _build_row_maps(ws):
+    all_values = ws.get_all_values()
+    row_map: Dict[Tuple[str, str], int] = {}
+    value_map: Dict[Tuple[str, str], List[str]] = {}
+
+    for idx, row in enumerate(all_values):
+        if idx == 0:
+            continue
+
+        row_idx = idx + 1
+        padded = _pad_row_values(row)
+        key = _sheet_key_from_values(padded)
+
+        if key[0] and key[1]:
+            row_map[key] = row_idx
+            value_map[key] = padded
+
+    return row_map, value_map
+
+
+def _shift_row_map_after_insert(row_map: Dict[Tuple[str, str], int], inserted_at: int):
+    for k in list(row_map.keys()):
+        if row_map[k] >= inserted_at:
+            row_map[k] += 1
+
+
+def _shift_row_map_after_delete(row_map: Dict[Tuple[str, str], int], deleted_at: int):
+    for k in list(row_map.keys()):
+        if row_map[k] > deleted_at:
+            row_map[k] -= 1
+
+
+def _delete_legacy_merged_row(ws, row_map, value_map, acpt_no: str):
+    legacy_key = (str(acpt_no).strip(), "유무")
+    legacy_row_idx = row_map.get(legacy_key)
+
+    if not legacy_row_idx:
+        return False
+
+    ws.delete_rows(legacy_row_idx)
+    time.sleep(0.3)
+
+    row_map.pop(legacy_key, None)
+    value_map.pop(legacy_key, None)
+    _shift_row_map_after_delete(row_map, legacy_row_idx)
+    return True
+
+
+def _upsert_rights_bonus_row(ws, row_map, value_map, row: Dict[str, Any]):
+    values = _row_dict_to_values(row)
+    key = _sheet_key_from_values(values)
+
+    if not key[0] or not key[1]:
+        return "skip", None
+
+    existing_row_idx = row_map.get(key)
+    end_col = _col_to_a1(len(RIGHTS_BONUS_HEADERS))
+
+    if existing_row_idx:
+        old_values = value_map.get(key, [""] * len(RIGHTS_BONUS_HEADERS))
+        if old_values != values:
+            ws.update(
+                range_name=f"A{existing_row_idx}:{end_col}{existing_row_idx}",
+                values=[values],
+            )
+            time.sleep(0.3)
+            value_map[key] = values
+            return "update", existing_row_idx
+        return "skip", existing_row_idx
+
+    insert_at = 2
+    ws.insert_rows([values], row=insert_at, value_input_option="USER_ENTERED")
+    time.sleep(0.3)
+
+    _shift_row_map_after_insert(row_map, insert_at)
+    row_map[key] = insert_at
+    value_map[key] = values
+    return "insert", insert_at
 
 
 # ==========================================================
@@ -1407,9 +1520,9 @@ def is_bonus_title(title: str) -> bool:
 
 # ==========================================================
 # 통합 파서
-# - 유무상은 한 줄 저장 + 구분=유무
-# - 컬럼은 기존 유상증자 틀 유지
-# - 유상 row를 기본으로 두고, 비어 있는 값만 무상 row로 보충
+# - 유상: [유 row]
+# - 무상: [무 row]
+# - 유무상: [유 row, 무 row]
 # ==========================================================
 def parse_rights_bonus_record(rec: Dict[str, Any]):
     title = clean_title(rec.get("title", ""))
@@ -1419,25 +1532,18 @@ def parse_rights_bonus_record(rec: Dict[str, Any]):
         rights_row, rights_missing, rights_suspicious = parse_rights_record(rec)
         bonus_row, bonus_missing, bonus_suspicious = parse_bonus_record(rec)
 
-        row = _blank_row()
-        row["구분"] = "유무"
-
-        for h in RIGHTS_BONUS_HEADERS:
-            if h == "구분":
-                continue
-
-            # 유상 row 우선, 비어 있으면 무상 row 값으로 보충
-            row[h] = first_nonempty(rights_row.get(h, ""), bonus_row.get(h, ""))
-
-        missing = sorted(set(rights_missing + bonus_missing))
-        suspicious = sorted(set(rights_suspicious + bonus_suspicious))
-        return row, missing, suspicious
+        return [
+            (rights_row, rights_missing, rights_suspicious),
+            (bonus_row, bonus_missing, bonus_suspicious),
+        ]
 
     if "유상증자결정" in title_n:
-        return parse_rights_record(rec)
+        row, missing, suspicious = parse_rights_record(rec)
+        return [(row, missing, suspicious)]
 
     if "무상증자결정" in title_n:
-        return parse_bonus_record(rec)
+        row, missing, suspicious = parse_bonus_record(rec)
+        return [(row, missing, suspicious)]
 
     row = _blank_row()
     row["구분"] = ""
@@ -1445,7 +1551,7 @@ def parse_rights_bonus_record(rec: Dict[str, Any]):
     row["보고서명"] = title
     row["링크"] = rec.get("src_url", "")
     row["접수번호"] = rec.get("acpt_no", "")
-    return row, [], ["구분"]
+    return [(row, [], ["구분"])]
 
 
 # ==========================================================
@@ -1467,6 +1573,8 @@ def run_parser():
         print("[INFO] RAW_dump에 파싱할 데이터가 없습니다.")
         return
 
+    row_map, value_map = _build_row_maps(rights_ws)
+
     ok = 0
     skip = 0
     fail = 0
@@ -1478,15 +1586,27 @@ def run_parser():
 
         try:
             if any(x in title_n for x in ["유상증자결정", "무상증자결정", "유무상증자결정"]):
-                row, missing, suspicious = parse_rights_bonus_record(rec)
-                mode, rownum = upsert_structured_row(
-                    rights_ws,
-                    RIGHTS_BONUS_HEADERS,
-                    row,
-                    "rights",
-                )
-                ok += 1
-                print(f"[OK][RIGHTS_BONUS][{mode}] {acpt_no} {title} :: 구분={row.get('구분', '')}")
+                if "유무상증자결정" in title_n:
+                    deleted = _delete_legacy_merged_row(rights_ws, row_map, value_map, acpt_no)
+                    if deleted:
+                        print(f"[CLEANUP] legacy 유무 row 삭제 완료 :: {acpt_no} {title}")
+
+                parsed_rows = parse_rights_bonus_record(rec)
+
+                # row=2에 개별 insert 되므로 reversed로 처리해야 최종 시트에서 유가 위, 무가 아래로 유지됨
+                rec_results = []
+                for row, missing, suspicious in reversed(parsed_rows):
+                    mode, rownum = _upsert_rights_bonus_row(
+                        rights_ws,
+                        row_map,
+                        value_map,
+                        row,
+                    )
+                    rec_results.append(f"{row.get('구분', '')}:{mode}")
+                    if mode in ("insert", "update", "skip"):
+                        ok += 1
+
+                print(f"[OK][RIGHTS_BONUS] {acpt_no} {title} :: {', '.join(reversed(rec_results))}")
             else:
                 skip += 1
                 print(f"[SKIP] {acpt_no} {title}")

@@ -1,18 +1,76 @@
 # 유상증자 + 무상증자 통합 파서
+# - 저장 탭은 기존 K_유상증자 하나만 사용
+# - 컬럼은 기존 유상증자 컬럼 구조 + 맨 앞 '구분'만 추가
+# - 구분: 유 / 무 / 유무
+# - 무상증자/유무상증자는 기존 유상증자 컬럼에 맞춰 넣고, 해당 없는 값은 공란 처리
+
 import re
 from typing import Dict, Any, List, Tuple, Optional
+
 import pandas as pd
 
 from parse_common import (
-    RAW_SHEET_NAME, RIGHTS_SHEET_NAME, RUN_ONLY_ACPTNO,
-    gs_open, ensure_ws, ensure_header, load_raw_records, upsert_structured_row,
-    clean_title, is_correction_title, extract_correction_after_map,
-    detect_company_from_tables, extract_company_name_from_title,
-    detect_market_from_title, detect_market_from_tables,
-    get_valid_date_by_labels, scan_label_value, scan_label_value_preferring_correction,
-    parse_float_like, _to_int, _to_float, _max_int_in_text, find_row_best_int, find_row_best_float,
-    fmt_number, fmt_eok_from_won, first_nonempty, normalize_text, _norm, _clean_label
+    RAW_SHEET_NAME,
+    RIGHTS_SHEET_NAME,
+    RUN_ONLY_ACPTNO,
+    gs_open,
+    ensure_ws,
+    ensure_header,
+    load_raw_records,
+    upsert_structured_row,
+    clean_title,
+    is_correction_title,
+    extract_correction_after_map,
+    detect_company_from_tables,
+    extract_company_name_from_title,
+    detect_market_from_title,
+    detect_market_from_tables,
+    get_valid_date_by_labels,
+    scan_label_value,
+    scan_label_value_preferring_correction,
+    parse_float_like,
+    _to_int,
+    _to_float,
+    _max_int_in_text,
+    find_row_best_int,
+    find_row_best_float,
+    fmt_number,
+    fmt_eok_from_won,
+    first_nonempty,
+    normalize_text,
+    _norm,
+    _clean_label,
 )
+
+# ==========================================================
+# 저장 헤더
+# - 기존 유상증자 컬럼 구조 유지
+# - 맨 앞에 '구분'만 추가
+# ==========================================================
+RIGHTS_BONUS_HEADERS = [
+    "구분",
+    "회사명",
+    "보고서명",
+    "상장시장",
+    "최초 이사회결의일",
+    "증자방식",
+    "발행상품",
+    "신규발행주식수",
+    "확정발행가(원)",
+    "기준주가",
+    "확정발행금액(억원)",
+    "할인(할증률)",
+    "증자전 주식수",
+    "증자비율",
+    "납입일",
+    "신주의 배당기산일",
+    "신주의 상장 예정일",
+    "이사회결의일",
+    "자금용도",
+    "투자자",
+    "링크",
+    "접수번호",
+]
 
 RIGHTS_REQUIRED_HEADERS = [
     "구분",
@@ -39,6 +97,7 @@ RIGHTS_REQUIRED_HEADERS = [
     "접수번호",
 ]
 
+# 무상증자는 기존 유상증자 컬럼 틀에 맞춰서 일부 컬럼만 채움
 BONUS_REQUIRED_HEADERS = [
     "구분",
     "회사명",
@@ -49,40 +108,9 @@ BONUS_REQUIRED_HEADERS = [
     "신규발행주식수",
     "증자전 주식수",
     "증자비율",
-    "1주당 배정주식수",
-    "배정기준일",
-    "권리락 예정일",
     "신주의 배당기산일",
     "신주의 상장 예정일",
     "이사회결의일",
-    "링크",
-    "접수번호",
-]
-
-RIGHTS_BONUS_HEADERS = [
-    "구분",
-    "회사명",
-    "보고서명",
-    "상장시장",
-    "최초 이사회결의일",
-    "증자방식",
-    "발행상품",
-    "신규발행주식수",
-    "확정발행가(원)",
-    "기준주가",
-    "확정발행금액(억원)",
-    "할인(할증률)",
-    "증자전 주식수",
-    "증자비율",
-    "1주당 배정주식수",
-    "배정기준일",
-    "권리락 예정일",
-    "납입일",
-    "신주의 배당기산일",
-    "신주의 상장 예정일",
-    "이사회결의일",
-    "자금용도",
-    "투자자",
     "링크",
     "접수번호",
 ]
@@ -91,6 +119,10 @@ RIGHTS_BONUS_HEADERS = [
 def _blank_row() -> Dict[str, str]:
     return {h: "" for h in RIGHTS_BONUS_HEADERS}
 
+
+# ==========================================================
+# 공통 숫자/주식수 헬퍼
+# ==========================================================
 def parse_shares_from_text(text: str) -> Tuple[int, int, int]:
     text_norm = _norm(text)
     text_norm = re.sub(r"202\d[년월일\.]?", "", text_norm)
@@ -136,6 +168,7 @@ def parse_shares_from_text(text: str) -> Tuple[int, int, int]:
             cv = v_nums[-1]
 
     return cv, ov, tv
+
 
 def extract_issue_shares_and_type(
     dfs: List[pd.DataFrame],
@@ -244,6 +277,7 @@ def extract_issue_shares_and_type(
 
     return None, "보통주식"
 
+
 def extract_issue_shares_and_type_section1_exact(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
@@ -290,16 +324,10 @@ def extract_issue_shares_and_type_section1_exact(
             return True
         if t in ("-", "—", "해당없음", "없음"):
             return True
-
-        # 섹션 번호/목차 숫자 차단
         if re.match(r"^\d+\s*[\.\)]\s*", t):
             return True
-
-        # 제목 셀 자체 차단
         if "신주의종류와수" in n:
             return True
-
-        # 날짜 차단
         if re.search(r"\d{4}[-./년]\s*\d{1,2}", t):
             return True
 
@@ -312,7 +340,6 @@ def extract_issue_shares_and_type_section1_exact(
 
         for i, cell in enumerate(normed):
             if any(kw in cell for kw in label_kws_norm):
-                # 라벨 오른쪽 셀만 본다. 행 전체 fallback 제거
                 for cand in cleaned[i + 1:]:
                     if _is_bad_share_candidate(cand):
                         continue
@@ -410,94 +437,6 @@ def extract_issue_shares_and_type_section1_exact(
 
     return None, ""
 
-    if corr_after:
-        for k, v in corr_after.items():
-            if _is_section1_heading(k):
-                txt = normalize_text(v)
-                common = None
-                other = None
-                total = None
-
-                m = re.search(r"보통주식\s*\(\s*주\s*\)\s*[:：]?\s*([0-9][0-9,]*)", txt)
-                if m:
-                    common = int(m.group(1).replace(",", ""))
-
-                m = re.search(r"(?:기타주식|종류주식|우선주식)\s*\(\s*주\s*\)\s*[:：]?\s*([0-9][0-9,]*)", txt)
-                if m:
-                    other = int(m.group(1).replace(",", ""))
-
-                m = re.search(r"(?:합계|총계|계)\s*[:：]?\s*([0-9][0-9,]*)", txt)
-                if m:
-                    total = int(m.group(1).replace(",", ""))
-
-                amt = total if total else (common or 0) + (other or 0)
-                if amt > 0:
-                    if other and not common:
-                        return amt, "우선주식"
-                    if common and not other:
-                        return amt, "보통주식"
-                    if common and other:
-                        return amt, "보통주식, 우선주식"
-                    return amt, "보통주식"
-
-    for df in dfs:
-        try:
-            arr = df.fillna("").astype(str).values
-        except Exception:
-            continue
-
-        R, C = arr.shape
-        for r in range(R):
-            row_list = arr[r].tolist()
-            first_cell = _first_nonempty_cell(row_list)
-            row_join = " ".join([normalize_text(x) for x in row_list if normalize_text(x)])
-
-            if not (_is_section1_heading(first_cell) or _is_section1_heading(row_join)):
-                continue
-
-            common = None
-            other = None
-            total = None
-            joined_txt = []
-
-            for rr in range(r, min(r + 8, R)):
-                next_row = [normalize_text(x) for x in arr[rr].tolist()]
-                next_first = _first_nonempty_cell(next_row)
-
-                if rr > r and _is_new_top_heading(next_first):
-                    break
-
-                row_text = " ".join([x for x in next_row if x])
-                if row_text:
-                    joined_txt.append(row_text)
-
-                if common is None:
-                    common = _extract_num_from_row_by_label(next_row, ["보통주식", "보통주"])
-
-                if other is None:
-                    other = _extract_num_from_row_by_label(
-                        next_row,
-                        ["기타주식", "종류주식", "우선주식", "기타주", "종류주", "우선주"],
-                    )
-
-                if total is None:
-                    total = _extract_num_from_row_by_label(next_row, ["합계", "총계", "계"])
-
-            amt = total if total else (common or 0) + (other or 0)
-            if amt > 0:
-                if other and not common:
-                    return amt, "우선주식"
-                if common and not other:
-                    return amt, "보통주식"
-                if common and other:
-                    return amt, "보통주식, 우선주식"
-
-                joined_norm = _norm(" ".join(joined_txt))
-                if "우선" in joined_norm or "종류" in joined_norm or "기타" in joined_norm:
-                    return amt, "보통주식, 우선주식" if "보통" in joined_norm else "우선주식"
-                return amt, "보통주식"
-
-    return None, ""
 
 def choose_issue_shares_and_type(
     dfs: List[pd.DataFrame],
@@ -506,7 +445,6 @@ def choose_issue_shares_and_type(
     old_amt, old_type = extract_issue_shares_and_type(dfs, corr_after)
     new_amt, new_type = extract_issue_shares_and_type_section1_exact(dfs, corr_after)
 
-    # new가 1, 2 같은 비정상 소수값이면 old 우선
     if old_amt and new_amt:
         if new_amt < 50 <= old_amt:
             return old_amt, (old_type or new_type or "보통주식")
@@ -526,6 +464,7 @@ def choose_issue_shares_and_type(
         return old_amt, (old_type or new_type or "보통주식")
 
     return new_amt, (new_type or old_type or "보통주식")
+
 
 def get_prev_shares_sum(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> Optional[int]:
     """
@@ -622,6 +561,7 @@ def get_prev_shares_sum(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> 
                     return amt
 
     return None
+
 
 def get_base_price_by_exact_section(
     dfs: List[pd.DataFrame],
@@ -720,6 +660,7 @@ def get_base_price_by_exact_section(
                     return max(vals)
 
     return None
+
 
 def get_price_by_exact_section(
     dfs: List[pd.DataFrame],
@@ -981,6 +922,7 @@ def get_price_by_exact_section(
 
     return None
 
+
 def extract_fund_use_and_amount(
     dfs: List[pd.DataFrame],
     corr_after: Dict[str, str],
@@ -1009,10 +951,7 @@ def extract_fund_use_and_amount(
         n = _norm(raw)
         if not raw:
             return False
-        return (
-            bool(re.match(r"^4[\.\)]?\s*자금조달의목적$", n))
-            or "4자금조달의목적" in n
-        )
+        return bool(re.match(r"^4[\.\)]?\s*자금조달의목적$", n)) or "4자금조달의목적" in n
 
     def _is_new_top_heading(text: str) -> bool:
         raw = normalize_text(text)
@@ -1048,7 +987,6 @@ def extract_fund_use_and_amount(
 
         return block_total
 
-    # 1) 정정공시 우선
     if corr_after:
         for itemk, v in corr_after.items():
             itemk_norm = _norm(itemk)
@@ -1058,7 +996,6 @@ def extract_fund_use_and_amount(
                     if amt and amt >= 100:
                         found_amts[std_name] = amt
 
-    # 2) 4. 자금조달의 목적 섹션 우선 스캔
     direct_total = None
 
     for df in dfs:
@@ -1090,7 +1027,6 @@ def extract_fund_use_and_amount(
             if section_total is not None and section_total >= 100:
                 direct_total = section_total
 
-    # 3) 전체 테이블 fallback
     for df in dfs:
         try:
             arr = df.fillna("").astype(str).values
@@ -1122,39 +1058,14 @@ def extract_fund_use_and_amount(
     final_total = direct_total if direct_total not in (None, 0) else (total_sum if total_sum > 0 else None)
     return ", ".join(uses), final_total
 
+
 def extract_investors_rights(dfs: List[pd.DataFrame], corr_after: Dict[str, str]) -> str:
     investors = []
     blacklist = [
-        "관계",
-        "지분",
-        "%",
-        "주식",
-        "배정",
-        "선정",
-        "경위",
-        "비고",
-        "해당사항",
-        "정정전",
-        "정정후",
-        "정정",
-        "변경",
-        "합계",
-        "소계",
-        "총계",
-        "발행",
-        "납입",
-        "예정",
-        "목적",
-        "주1",
-        "주2",
-        "주)",
-        "기타",
-        "참고",
-        "출자자수",
-        "본점",
-        "소재지",
-        "(명)",
-        "명",
+        "관계", "지분", "%", "주식", "배정", "선정", "경위", "비고", "해당사항",
+        "정정전", "정정후", "정정", "변경", "합계", "소계", "총계", "발행", "납입",
+        "예정", "목적", "주1", "주2", "주)", "기타", "참고", "출자자수", "본점", "소재지",
+        "(명)", "명",
     ]
 
     def is_valid_name(s: str) -> bool:
@@ -1237,6 +1148,10 @@ def extract_investors_rights(dfs: List[pd.DataFrame], corr_after: Dict[str, str]
 
     return ""
 
+
+# ==========================================================
+# 유상증자 파서
+# ==========================================================
 def parse_rights_record(rec: Dict[str, Any]):
     title = clean_title(rec["title"])
     tables = rec["tables"]
@@ -1366,15 +1281,13 @@ def parse_rights_record(rec: Dict[str, Any]):
     price_val = parse_float_like(row["확정발행가(원)"])
     pre_shares = parse_float_like(row["증자전 주식수"])
 
-    # 확정발행금액(억원): 기존 계산 로직 우선
     amount_won = None
     if new_shares is not None and price_val is not None:
         amount_won = int(round(new_shares * price_val))
-    
-    # 계산 실패 시에만 4. 자금조달의 목적 합계 사용
+
     if amount_won is None and use_total is not None:
         amount_won = int(use_total)
-    
+
     if amount_won is not None:
         row["확정발행금액(억원)"] = fmt_eok_from_won(amount_won)
 
@@ -1401,17 +1314,11 @@ def parse_rights_record(rec: Dict[str, Any]):
     return row, missing, suspicious
 
 
-
-def _fmt_alloc_ratio(value: str) -> str:
-    s = normalize_text(value)
-    if not s:
-        return ""
-    num = parse_float_like(s)
-    if num is None:
-        return s
-    return f"{num:g}"
-
-def parse_bonus_record(rec):
+# ==========================================================
+# 무상증자 파서
+# - 기존 유상증자 컬럼 틀에 맞춰 일부 값만 채움
+# ==========================================================
+def parse_bonus_record(rec: Dict[str, Any]):
     title = clean_title(rec["title"])
     tables = rec["tables"]
     corr_after = extract_correction_after_map(tables) if is_correction_title(title) else {}
@@ -1454,23 +1361,6 @@ def parse_bonus_record(rec):
     if prev_shares:
         row["증자전 주식수"] = fmt_number(prev_shares)
 
-    alloc_ratio = scan_label_value_preferring_correction(
-        tables,
-        ["1주당 배정주식수", "1주당 신주배정주식수", "주당배정주식수", "1주당 배정비율"],
-        corr_after,
-    )
-    row["1주당 배정주식수"] = _fmt_alloc_ratio(alloc_ratio)
-
-    row["배정기준일"] = get_valid_date_by_labels(
-        tables,
-        ["배정기준일", "신주배정기준일"],
-        corr_after,
-    )
-    row["권리락 예정일"] = get_valid_date_by_labels(
-        tables,
-        ["권리락 예정일", "권리락일", "권리락 예정", "권리락"],
-        corr_after,
-    )
     row["신주의 배당기산일"] = get_valid_date_by_labels(
         tables,
         ["신주의 배당기산일", "배당기산일"],
@@ -1502,6 +1392,9 @@ def parse_bonus_record(rec):
     return row, missing, suspicious
 
 
+# ==========================================================
+# 제목 분기
+# ==========================================================
 def is_rights_title(title: str) -> bool:
     t = (title or "").replace(" ", "")
     return ("유상증자결정" in t) or ("유무상증자결정" in t)
@@ -1512,19 +1405,12 @@ def is_bonus_title(title: str) -> bool:
     return ("무상증자결정" in t) or ("유무상증자결정" in t)
 
 
-def _merge_distinct(values: List[str], joiner: str = " / ") -> str:
-    uniq = []
-    for v in values:
-        s = normalize_text(v)
-        if s and s not in uniq:
-            uniq.append(s)
-    if not uniq:
-        return ""
-    if len(uniq) == 1:
-        return uniq[0]
-    return joiner.join(uniq)
-
-
+# ==========================================================
+# 통합 파서
+# - 유무상은 한 줄 저장 + 구분=유무
+# - 컬럼은 기존 유상증자 틀 유지
+# - 유상 row를 기본으로 두고, 비어 있는 값만 무상 row로 보충
+# ==========================================================
 def parse_rights_bonus_record(rec: Dict[str, Any]):
     title = clean_title(rec.get("title", ""))
     title_n = title.replace(" ", "")
@@ -1532,18 +1418,16 @@ def parse_rights_bonus_record(rec: Dict[str, Any]):
     if "유무상증자결정" in title_n:
         rights_row, rights_missing, rights_suspicious = parse_rights_record(rec)
         bonus_row, bonus_missing, bonus_suspicious = parse_bonus_record(rec)
+
         row = _blank_row()
         row["구분"] = "유무"
 
-        same_value_fields = {"회사명", "보고서명", "상장시장", "최초 이사회결의일", "링크", "접수번호"}
         for h in RIGHTS_BONUS_HEADERS:
             if h == "구분":
                 continue
-            values = [rights_row.get(h, ""), bonus_row.get(h, "")]
-            if h in same_value_fields:
-                row[h] = first_nonempty(*values)
-            else:
-                row[h] = _merge_distinct(values)
+
+            # 유상 row 우선, 비어 있으면 무상 row 값으로 보충
+            row[h] = first_nonempty(rights_row.get(h, ""), bonus_row.get(h, ""))
 
         missing = sorted(set(rights_missing + bonus_missing))
         suspicious = sorted(set(rights_suspicious + bonus_suspicious))
@@ -1564,6 +1448,9 @@ def parse_rights_bonus_record(rec: Dict[str, Any]):
     return row, [], ["구분"]
 
 
+# ==========================================================
+# Runner
+# ==========================================================
 def run_parser():
     sh = gs_open()
 
@@ -1592,9 +1479,14 @@ def run_parser():
         try:
             if any(x in title_n for x in ["유상증자결정", "무상증자결정", "유무상증자결정"]):
                 row, missing, suspicious = parse_rights_bonus_record(rec)
-                mode, rownum = upsert_structured_row(rights_ws, RIGHTS_BONUS_HEADERS, row, "rights")
+                mode, rownum = upsert_structured_row(
+                    rights_ws,
+                    RIGHTS_BONUS_HEADERS,
+                    row,
+                    "rights",
+                )
                 ok += 1
-                print(f"[OK][RIGHTS_BONUS][{mode}] {acpt_no} {title} :: 구분={row.get('구분','')}")
+                print(f"[OK][RIGHTS_BONUS][{mode}] {acpt_no} {title} :: 구분={row.get('구분', '')}")
             else:
                 skip += 1
                 print(f"[SKIP] {acpt_no} {title}")

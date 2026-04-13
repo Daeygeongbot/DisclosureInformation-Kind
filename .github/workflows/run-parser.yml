@@ -1,4 +1,4 @@
-name: KIND공시 - RAW데이터 및 시트 내용 채우기 (Put&Call 제외)
+name: KIND공시 - RAW + Parse
 
 on:
   workflow_dispatch:
@@ -25,10 +25,7 @@ jobs:
       SEEN_SHEET_NAME: "seen"
       RIGHTS_SHEET_NAME: "K_유상증자"
       BOND_SHEET_NAME: "K_주식연계채권"
-      PARSE_LOG_SHEET_NAME: "parse_log"
-      REVIEW_SHEET_NAME: "review_queue"
-      REVIEW_LOOKBACK_MINUTES: "20"
-      KEYWORDS: "유상증자결정,전환사채권발행결정,교환사채권발행결정,신주인수권부사채권발행결정"
+      KEYWORDS: "유상증자결정,무상증자결정,유무상증자결정,전환사채권발행결정,교환사채권발행결정,신주인수권부사채권발행결정"
 
     steps:
       - name: Checkout
@@ -51,5 +48,8 @@ jobs:
       - name: Run RAW scraper
         run: python main_raw.py
 
-      - name: Run parser
-        run: python main_parse.py
+      - name: Run rights + bonus parser
+        run: python main_parse_rights_bonus.py
+
+      - name: Run bonds parser
+        run: python main_parse_bonds.py

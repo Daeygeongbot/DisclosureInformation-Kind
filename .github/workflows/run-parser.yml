@@ -53,3 +53,6 @@ jobs:
 
       - name: Run bonds parser
         run: python main_parse_bonds.py
+
+      - name: Run bond option parser
+        run: python main_parse_bond_option.py

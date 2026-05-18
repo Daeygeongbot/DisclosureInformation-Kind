@@ -1,10 +1,8 @@
 name: KIND공시 - Put&Call 전용 액션
 
 on:
-  workflow_run:
-    workflows: ["KIND공시 - RAW + Parse"]
-    types:
-      - completed
+  schedule:
+    - cron: "0 11 * * *"   # 매일 한국시간 오후 8시
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +11,6 @@ concurrency:
 
 jobs:
   run-kind-option:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
